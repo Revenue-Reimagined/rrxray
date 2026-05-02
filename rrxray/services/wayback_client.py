@@ -1,6 +1,7 @@
 """WaybackClient: archived snapshots at N-month intervals over M-month span."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -54,14 +55,24 @@ class WaybackClient:
         interval_months: int = 6,
         span_months: int = 18,
     ) -> list[Snapshot]:
+        from rrxray.services.firecrawl_client import FirecrawlError
+
         now = datetime.now(UTC)
         targets = [_months_back(now, k) for k in range(0, span_months + 1, interval_months)]
         results: list[Snapshot] = []
         for target in targets:
-            archive_url = await self._lookup_archive_url(url, target)
+            try:
+                archive_url = await self._lookup_archive_url(url, target)
+            except WaybackError as e:
+                log.warning("availability lookup failed for target=%s: %s", target.date(), e)
+                continue
             if archive_url is None:
                 continue
-            page = await self.firecrawl.scrape_url(archive_url, only_main_content=True)
+            try:
+                page = await self.firecrawl.scrape_url(archive_url, only_main_content=True)
+            except FirecrawlError as e:
+                log.warning("snapshot scrape failed for archive=%s: %s", archive_url, e)
+                continue
             results.append(Snapshot(
                 timestamp=target,
                 archive_url=archive_url,
@@ -81,6 +92,8 @@ class WaybackClient:
                 try:
                     response = await client.get(api_url, params=params)
                     response.raise_for_status()
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
                     log.warning("Wayback availability check failed: %s", e)
                     raise WaybackError(f"availability lookup failed: {e}") from e
