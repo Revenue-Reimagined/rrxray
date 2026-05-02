@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from rrxray.schemas.data import Finding, SourceCitation
+from rrxray.schemas._shared import Finding, SourceCitation
 
 
 class PricingTier(BaseModel):

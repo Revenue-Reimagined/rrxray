@@ -4,16 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
-class SourceCitation(BaseModel):
-    url: str
-    timestamp: datetime
-    evidence_path: str | None = None
-
-
-class Finding(BaseModel):
-    text: str
-    source: SourceCitation
+# Re-export shared base types so existing importers (tests, etc.) keep working.
+from rrxray.schemas._shared import Finding, SourceCitation
 
 
 class ModuleFailure(BaseModel):
