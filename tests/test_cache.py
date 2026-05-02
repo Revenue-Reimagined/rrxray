@@ -108,3 +108,18 @@ def test_cache_file_format(tmp_path: Path):
     payload = json.loads(files[0].read_text())
     assert "timestamp" in payload
     assert payload["response"] == {"hello": "world"}
+
+
+def test_write_does_not_leave_tmp_file(tmp_path: Path):
+    cache = DiskCache(dir=tmp_path, mode="live")
+
+    async def upstream():
+        return {"x": 1}
+
+    import asyncio
+    asyncio.run(cache.get_or_call("foo", {"a": 1}, upstream))
+
+    files = list(tmp_path.iterdir())
+    # Exactly one .json file, no .tmp leftovers
+    assert len(files) == 1
+    assert files[0].suffix == ".json"

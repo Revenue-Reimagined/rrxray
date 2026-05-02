@@ -23,6 +23,14 @@ class DiskCache:
         self.dir.mkdir(parents=True, exist_ok=True)
 
     def _key(self, method_name: str, args: dict[str, Any]) -> str:
+        """Compute a 16-hex-char cache key from a method name and its args dict.
+
+        ``args`` MUST be JSON-native (str, int, float, bool, None, list, dict).
+        Non-JSON-native values are coerced via ``str()`` and may produce
+        non-deterministic keys (e.g., for objects whose repr includes memory
+        addresses). Service-client wrappers must canonicalize args before
+        calling get_or_call.
+        """
         canonical = json.dumps({"m": method_name, "a": args}, sort_keys=True, default=str)
         return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
@@ -42,7 +50,9 @@ class DiskCache:
             "timestamp": datetime.now(UTC).isoformat(),
             "response": response,
         }
-        p.write_text(json.dumps(payload, indent=2, default=str))
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=2, default=str))
+        tmp.replace(p)
 
     async def get_or_call(
         self,
