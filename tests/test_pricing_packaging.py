@@ -76,3 +76,69 @@ def test_pricing_url_falls_back_to_slash_plans(tmp_path):
     })
     result = asyncio.run(pricing_packaging.collect(ctx))
     assert result.current_pricing_url == "https://example.com/plans"
+
+
+def test_extract_tiers_from_typical_pricing_page():
+    md = """
+# Pricing
+
+## Starter
+$0 per month — for individuals
+
+## Pro
+$50 per seat per month
+
+## Enterprise
+Contact us for pricing
+"""
+    tiers = pricing_packaging._extract_tiers(md)
+    assert len(tiers) == 3
+    names = [t.name for t in tiers]
+    assert "Starter" in names
+    assert "Pro" in names
+    assert "Enterprise" in names
+    pro = next(t for t in tiers if t.name == "Pro")
+    assert "$50" in pro.price
+    assert "month" in pro.cadence.lower() or "seat" in pro.cadence.lower()
+
+
+def test_extract_tiers_returns_empty_when_no_dollar_amounts():
+    md = "Welcome to our pricing! Contact sales for details."
+    tiers = pricing_packaging._extract_tiers(md)
+    assert tiers == []
+
+
+def test_detect_contact_us_returns_true_when_gated():
+    md = "Contact sales for a custom quote. Request demo."
+    assert pricing_packaging._detect_contact_us(md) is True
+
+
+def test_detect_contact_us_returns_false_when_prices_visible():
+    md = "## Pro\n\n$50/month\n\n## Enterprise\n\n$500/month"
+    assert pricing_packaging._detect_contact_us(md) is False
+
+
+def test_collect_extracts_tiers_from_real_markdown(tmp_path):
+    md = """
+# Pricing
+
+## Starter — Free
+$0/month
+
+## Pro
+$50 per user per month
+
+## Enterprise
+Contact us
+"""
+    ctx = make_ctx(tmp_path, scrape_responses={
+        "https://example.com/pricing": {
+            "markdown": md,
+            "html": "",
+            "metadata": {"sourceURL": "https://example.com/pricing"},
+        },
+    })
+    result = asyncio.run(pricing_packaging.collect(ctx))
+    assert len(result.current_tiers) >= 2
+    tier_names = [t.name for t in result.current_tiers]
+    assert "Pro" in tier_names
