@@ -142,3 +142,56 @@ Contact us
     assert len(result.current_tiers) >= 2
     tier_names = [t.name for t in result.current_tiers]
     assert "Pro" in tier_names
+
+
+# ---------------------------------------------------------------------------
+# Task 12: Snapshot diff logic
+# ---------------------------------------------------------------------------
+from datetime import date  # noqa: E402
+
+
+def test_diff_detects_price_increase():
+    from rrxray.schemas.pricing_packaging import PricingTier
+    older = [PricingTier(name="Pro", price="$40", cadence="month", notes="")]
+    current = [PricingTier(name="Pro", price="$50", cadence="month", notes="")]
+    changes = pricing_packaging._diff_tier_lists(older, current, observed_at=date(2026, 5, 1))
+    kinds = {c.kind for c in changes}
+    assert "price_increased" in kinds
+
+
+def test_diff_detects_tier_added():
+    from rrxray.schemas.pricing_packaging import PricingTier
+    older = [PricingTier(name="Pro", price="$50", cadence="month", notes="")]
+    current = [
+        PricingTier(name="Pro", price="$50", cadence="month", notes=""),
+        PricingTier(name="Enterprise", price="$500", cadence="month", notes=""),
+    ]
+    changes = pricing_packaging._diff_tier_lists(older, current, observed_at=date(2026, 5, 1))
+    assert any(c.kind == "tier_added" and c.after == "Enterprise" for c in changes)
+
+
+def test_diff_detects_tier_removed():
+    from rrxray.schemas.pricing_packaging import PricingTier
+    older = [
+        PricingTier(name="Pro", price="$50", cadence="month", notes=""),
+        PricingTier(name="Old Plan", price="$10", cadence="month", notes=""),
+    ]
+    current = [PricingTier(name="Pro", price="$50", cadence="month", notes="")]
+    changes = pricing_packaging._diff_tier_lists(older, current, observed_at=date(2026, 5, 1))
+    assert any(c.kind == "tier_removed" and c.before == "Old Plan" for c in changes)
+
+
+def test_diff_detects_price_decrease():
+    from rrxray.schemas.pricing_packaging import PricingTier
+    older = [PricingTier(name="Pro", price="$50", cadence="month", notes="")]
+    current = [PricingTier(name="Pro", price="$40", cadence="month", notes="")]
+    changes = pricing_packaging._diff_tier_lists(older, current, observed_at=date(2026, 5, 1))
+    kinds = {c.kind for c in changes}
+    assert "price_decreased" in kinds
+
+
+def test_diff_no_changes_returns_empty():
+    from rrxray.schemas.pricing_packaging import PricingTier
+    tiers = [PricingTier(name="Pro", price="$50", cadence="month", notes="")]
+    changes = pricing_packaging._diff_tier_lists(tiers, tiers, observed_at=date(2026, 5, 1))
+    assert changes == []

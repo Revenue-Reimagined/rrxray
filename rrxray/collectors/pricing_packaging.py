@@ -56,6 +56,59 @@ def _detect_contact_us(markdown: str) -> bool:
     return has_contact_phrase and not has_dollar
 
 
+def _parse_price_value(price: str) -> float | None:
+    """Extract numeric value from a price string like '$50' or '$1,200.50'."""
+    m = _PRICE_RE.search(price)
+    if m is None:
+        return None
+    return float(m.group(1).replace(",", ""))
+
+
+def _diff_tier_lists(older, current, observed_at):
+    """Compare two PricingTier lists and emit PricingChange rows.
+
+    `older` represents the historically-earlier state; `current` the later state.
+    Emits tier_added / tier_removed / price_increased / price_decreased rows.
+    Comparison is by tier name (case-insensitive).
+    """
+    from rrxray.schemas.pricing_packaging import PricingChange
+
+    changes: list[PricingChange] = []
+    older_by_name = {t.name.lower(): t for t in older}
+    current_by_name = {t.name.lower(): t for t in current}
+
+    for name_lower, t_current in current_by_name.items():
+        if name_lower not in older_by_name:
+            changes.append(PricingChange(
+                date_observed=observed_at, kind="tier_added", before="", after=t_current.name,
+            ))
+
+    for name_lower, t_older in older_by_name.items():
+        if name_lower not in current_by_name:
+            changes.append(PricingChange(
+                date_observed=observed_at, kind="tier_removed", before=t_older.name, after="",
+            ))
+
+    for name_lower in current_by_name.keys() & older_by_name.keys():
+        t_old = older_by_name[name_lower]
+        t_new = current_by_name[name_lower]
+        old_v = _parse_price_value(t_old.price)
+        new_v = _parse_price_value(t_new.price)
+        if old_v is None or new_v is None:
+            continue
+        if new_v > old_v:
+            changes.append(PricingChange(
+                date_observed=observed_at, kind="price_increased",
+                before=t_old.price, after=t_new.price,
+            ))
+        elif new_v < old_v:
+            changes.append(PricingChange(
+                date_observed=observed_at, kind="price_decreased",
+                before=t_old.price, after=t_new.price,
+            ))
+    return changes
+
+
 async def _discover_pricing_url(ctx: CollectorContext) -> tuple[str | None, ScrapedPage | None]:
     base = f"https://{ctx.domain}"
     for path in CANDIDATE_PATHS:
