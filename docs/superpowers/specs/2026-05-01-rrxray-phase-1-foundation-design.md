@@ -1,4 +1,4 @@
-# rrxray Phase 1 Foundation — Design
+# rrxray Phase 1 Foundation: Design
 
 **Date:** 2026-05-01
 **Status:** Approved (brainstorming complete)
@@ -155,32 +155,46 @@ from rrxray.synthesizers import observed_gtm_motion_pricing
 COLLECTORS = [pricing_packaging]
 SYNTHESIZERS = [observed_gtm_motion_pricing]
 
-async def run_pipeline(config: Config) -> XrayData:
+async def run_pipeline(config: Config) -> tuple[XrayData, str]:
+    """Returns (data, rendered_markdown). Caller is responsible for writing both to disk."""
+    voice = VoicePostProcessor()
+    anonymizer = build_anonymizer(config)
+
     collector_ctx = build_collector_context(config)
     collector_outputs, collector_failures = await run_collectors(collector_ctx)
 
-    synth_ctx = build_synthesizer_context(config, collector_outputs)
+    synth_ctx = build_synthesizer_context(config, collector_outputs, voice, anonymizer)
     synth_outputs, synth_failures = await run_synthesizers(synth_ctx)
 
-    return XrayData(
+    # Build XrayData WITHOUT voice_log first; render needs it for everything except voice section
+    data = XrayData(
         domain=config.domain,
         collectors=collector_outputs,
         synthesizers=synth_outputs,
         failures=collector_failures + synth_failures,
         sources=flatten_sources(collector_outputs),
-        voice_log=synth_ctx.voice.flush_log(),
+        voice_log=[],   # filled in below, after render
         run_metadata=build_run_metadata(config),
         inputs=config.to_input_params(),
     )
+
+    # Render. The voice_collector Jinja filter writes events into voice._log during this call.
+    rendered = render_internal(data, anonymizer, voice)
+
+    # Now flush. voice_log contains events from BOTH synthesizer raises AND render-time substitutions.
+    data.voice_log = voice.flush_log()
+
+    return data, rendered
 
 async def run_collectors(ctx) -> tuple[CollectorOutputs, list[ModuleFailure]]:
     coros = [(c.NAME, c.collect(ctx)) for c in COLLECTORS]
     results = await asyncio.gather(*[coro for _, coro in coros], return_exceptions=True)
     outputs = CollectorOutputs()
-    failures = []
+    failures: list[ModuleFailure] = []
     for (name, _), result in zip(coros, results):
-        if isinstance(result, Exception):
-            failures.append(ModuleFailure(module=name, kind="collector", error=str(result), traceback=...))
+        if isinstance(result, BaseException):
+            tb = "".join(traceback.format_exception(type(result), result, result.__traceback__))
+            failures.append(ModuleFailure(module=name, kind="collector", error=str(result), traceback=tb))
             log.warning(f"Collector {name} failed: {result}")
         else:
             setattr(outputs, name, result)
@@ -195,7 +209,7 @@ async def run_collectors(ctx) -> tuple[CollectorOutputs, list[ModuleFailure]]:
 
 ### Service clients (`rrxray/services/`)
 
-#### `cache.py` — DiskCache (the cache-as-fixture core)
+#### `cache.py`: DiskCache (the cache-as-fixture core)
 
 Three modes:
 
@@ -205,7 +219,7 @@ Three modes:
 
 Cache key = `sha256(method_name + canonical_json(args))[:16]`. Cache value = `{"timestamp": iso8601, "response": <serialized response>}`. TTL default 24h. Stored at `~/.rrxray/cache/<service>/<key>.json` for live runs and `tests/fixtures/cache/<service>/<key>.json` for tests. Tests select `replay-only` and point `cache_dir` at the fixtures directory via a pytest fixture (no monkeypatching, no mock library).
 
-#### `firecrawl_client.py` — FirecrawlClient
+#### `firecrawl_client.py`: FirecrawlClient
 
 Async wrapper around `firecrawl-py`. Phase 1 uses one method; the other two interfaces exist for Phase 2:
 
@@ -215,9 +229,9 @@ Async wrapper around `firecrawl-py`. Phase 1 uses one method; the other two inte
 
 Each method goes through `DiskCache`. Concurrency capped at 5 simultaneous calls via an `asyncio.Semaphore` bound on the client instance.
 
-#### `anthropic_client.py` — AnthropicClient
+#### `anthropic_client.py`: AnthropicClient
 
-Async wrapper with prompt caching baked in from day one. The `complete_with_cached_system()` method accepts `(system_prompt: str, user_message: str, model: str = "claude-sonnet-4-6", response_schema: type[BaseModel] | None = None)` and constructs the request with `cache_control: {"type": "ephemeral"}` on the system prompt. Cache hit telemetry is logged.
+Async wrapper with prompt caching baked in from day one. The `complete_with_cached_system()` method accepts `(system_prompt: str, user_message: str, model: str = "claude-sonnet-4-6", response_schema: type[BaseModel] | None = None)` and constructs the request with `cache_control: {"type": "ephemeral"}` on the system prompt. Cache hit telemetry (`cache_creation_input_tokens`, `cache_read_input_tokens`) is logged via `logging.getLogger("rrxray.anthropic")` at INFO level so cache effectiveness is visible in stdout during runs and captured in test logs.
 
 The synthesizer system prompt is roughly 3-4K tokens of static content (voice rules + quarantine + anonymity + framework). Within a 5-minute window, every iteration on the user message reuses the cached system prompt at 10% of normal input cost, cutting cost 5-8× during prompt-tuning sessions.
 
@@ -225,13 +239,13 @@ The disk cache key for Anthropic includes `model + system_prompt + user_message`
 
 `response_schema` enforces a JSON shape via Anthropic tool-use, killing the "Claude returned a paragraph instead of JSON" failure mode.
 
-#### `wayback_client.py` — WaybackClient
+#### `wayback_client.py`: WaybackClient
 
 Single method: `async def snapshots(url: str, interval_months: int = 6, span_months: int = 18) -> list[Snapshot]`. Returns up to four `Snapshot(timestamp, archive_url, html)` objects. Internally generates target timestamps; hits `https://archive.org/wayback/available?url=...&timestamp=...` for each; fetches snapshot HTML via Firecrawl scrape (so it goes through the same cache layer + concurrency cap).
 
 ### Schemas (`rrxray/schemas/`)
 
-#### `data.py` — XrayData (canonical top-level)
+#### `data.py`: XrayData (canonical top-level)
 
 ```python
 class XrayData(BaseModel):
@@ -260,7 +274,7 @@ Every collector and synthesizer field is `| None`. Missing = "not run" or "faile
 
 `ModuleFailure(module: str, kind: Literal["collector", "synthesizer"], error: str, traceback: str)` and `VoiceEvent(rule: str, original: str, replacement: str | None, context: str, action: Literal["substitute", "raise"])` are the audit-trail rows.
 
-#### `pricing_packaging.py` — PricingPackagingData
+#### `pricing_packaging.py`: PricingPackagingData
 
 ```python
 class PricingPackagingData(BaseModel):
@@ -319,7 +333,12 @@ class VoicePostProcessor:
     def process_synthesizer_text(self, text: str, context: str) -> str:
         return self._apply(text, context, on_violation="raise")
 
+    def peek_log(self) -> list[VoiceEvent]:
+        """Non-destructive read; returns a copy. Used by the renderer's Voice Adjustments section."""
+        return list(self._log)
+
     def flush_log(self) -> list[VoiceEvent]:
+        """Returns events and clears internal state. Called by the pipeline after render."""
         events, self._log = self._log, []
         return events
 ```
@@ -453,23 +472,30 @@ Phase 1's user message template (`prompts/observed_gtm_motion_pricing.md`) takes
 ### Markdown renderer (`rrxray/rendering/markdown.py`)
 
 ```python
-def render_internal(data: XrayData, output_path: Path, anonymizer: Anonymizer, voice: VoicePostProcessor) -> None:
+def render_internal(data: XrayData, anonymizer: Anonymizer, voice: VoicePostProcessor) -> str:
+    """Returns the rendered markdown string. Pure: no I/O. Caller writes to disk."""
     env = Environment(loader=FileSystemLoader("templates"), trim_blocks=True, lstrip_blocks=True)
     env.filters["anonymize"] = anonymizer.anonymize
     env.filters["voice_collector"] = voice.process_collector_text
     env.filters["bullet_list"] = lambda items: "\n".join(f"- {it}" for it in items)
-    env.globals["collected_discovery_questions"] = _collect_questions
+    env.globals["collected_discovery_questions"] = _collect_discovery_questions
+    env.globals["voice_events"] = voice.peek_log    # non-destructive read
 
     template = env.get_template("report_internal.md.jinja")
-    rendered = template.render(data=data)
-    output_path.write_text(rendered)
+    return template.render(data=data)
 ```
+
+`_collect_discovery_questions(data: XrayData) -> list[str]` walks every collector output's `discovery_questions` and every synthesizer output's `discovery_questions`, deduplicates while preserving order, and returns the combined list.
 
 Anonymization happens at render via Jinja filter. Every paragraph passes through `anonymizer.anonymize` before hitting disk. If the anonymizer registry contains a name and the renderer doesn't pipe through the filter on some code path, the test suite catches it.
 
-Voice post-processing also happens at render via the `voice_collector` filter. Synthesizer text already went through `process_synthesizer_text` (which raises). The filter applies a second pass in *collector mode* to catch anything mechanical that slipped through. Cheap belt-and-suspenders.
+Voice post-processing also happens at render via the `voice_collector` filter. Synthesizer text already went through `process_synthesizer_text` (which raises on violation, never substitutes). The filter applies a second pass in *collector mode* to catch anything mechanical that slipped through. Cheap belt-and-suspenders.
 
-The renderer is otherwise pure: `XrayData → str`, no I/O except the final `write_text`. Trivial to test (golden-file tests against fixture XrayData inputs).
+**Voice log timing.** The renderer's `voice_collector` filter writes events into `voice._log` as Jinja walks the template top-to-bottom. The "Voice Adjustments" subsection of the report's Sources/Methodology section is rendered LAST (positioned at the bottom of the template), and uses `voice_events()` (which calls `voice.peek_log()`, a non-destructive read) to iterate every event accumulated so far. After rendering completes, the pipeline calls `voice.flush_log()` to write the same events into `XrayData.voice_log` for `data.json`. So data.json and the rendered report stay in sync.
+
+`peek_log()` and `flush_log()` are both methods on `VoicePostProcessor`. `peek_log` returns a copy without clearing; `flush_log` returns and clears.
+
+The renderer is otherwise pure: `(XrayData, anonymizer, voice) → str`, no I/O. Trivial to test (golden-file tests against fixture XrayData inputs).
 
 ### Report template (`templates/report_internal.md.jinja`)
 
@@ -545,22 +571,26 @@ build_collector_context(config) → CollectorContext
    ↓
 asyncio.gather(c.collect(ctx) for c in COLLECTORS, return_exceptions=True)
    ↓
-CollectorOutputs (with None for failed collectors) + list[ModuleFailure]
+CollectorOutputs (None for failed collectors) + list[ModuleFailure]
    ↓
-build_synthesizer_context(config, collector_outputs) → SynthesizerContext
+build_synthesizer_context(config, collector_outputs, voice, anonymizer) → SynthesizerContext
    ↓
 asyncio.gather(s.synthesize(ctx) for s in SYNTHESIZERS, return_exceptions=True)
    ↓
-SynthesizerOutputs (with None for failed) + list[ModuleFailure]
+SynthesizerOutputs (None for failed) + list[ModuleFailure]
    ↓
-XrayData (validated by pydantic)
+XrayData (voice_log empty initially)
    ↓
-data.json written to output_dir
+render_internal(data, anonymizer, voice) → markdown string
+   (Jinja filters call voice.process_collector_text and anonymizer.anonymize during walk;
+    Voice Adjustments section reads voice.peek_log() at the bottom of the template)
    ↓
-render_internal(data, ..., anonymizer, voice) → report.internal.md
+data.voice_log = voice.flush_log()   (now contains every event from synthesis + render)
    ↓
-voice_log + failures surfaced in report Sources/Methodology section
+write data.json AND report.internal.md to output_dir
 ```
+
+The CLI is the only layer that touches disk for the rendered outputs. `run_pipeline()` returns `(XrayData, str)`. This means the pipeline is fully testable without filesystem assertions: tests inspect the returned tuple.
 
 ---
 
