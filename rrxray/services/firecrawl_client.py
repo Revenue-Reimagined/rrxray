@@ -46,20 +46,39 @@ class FirecrawlClient:
 
         async def upstream() -> dict[str, Any]:
             async with self._semaphore:
-                params = {"pageOptions": {"onlyMainContent": only_main_content}}
                 try:
+                    # firecrawl-py v2: Firecrawl.scrape(url, formats=..., only_main_content=...)
+                    # Returns a Document object; we serialize to dict for caching.
                     response = await asyncio.to_thread(
-                        self._sdk.scrape_url, url, params=params,
+                        self._sdk.scrape,
+                        url,
+                        formats=["markdown", "html"],
+                        only_main_content=only_main_content,
                     )
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
-                    log.warning("Firecrawl scrape_url failed for %s: %s", url, e)
-                    raise FirecrawlError(f"scrape_url({url}) failed: {e}") from e
-            return response
+                    log.warning("Firecrawl scrape failed for %s: %s", url, e)
+                    raise FirecrawlError(f"scrape({url}) failed: {e}") from e
+            # Document objects from firecrawl-py v2 may need conversion
+            if hasattr(response, "model_dump"):
+                return response.model_dump()
+            if hasattr(response, "dict"):
+                return response.dict()
+            if isinstance(response, dict):
+                return response
+            # Fallback: extract attributes
+            return {
+                "markdown": getattr(response, "markdown", "") or "",
+                "html": getattr(response, "html", "") or "",
+                "metadata": getattr(response, "metadata", {}) or {},
+            }
 
-        raw = await self.cache.get_or_call("firecrawl.scrape_url", args, upstream)
+        raw = await self.cache.get_or_call("firecrawl.scrape", args, upstream)
+        meta = raw.get("metadata") or {}
         return ScrapedPage(
-            url=raw.get("metadata", {}).get("sourceURL", url),
-            markdown=raw.get("markdown", ""),
-            html=raw.get("html", ""),
-            metadata=raw.get("metadata", {}),
+            url=meta.get("source_url") or meta.get("sourceURL") or meta.get("url") or url,
+            markdown=raw.get("markdown") or "",
+            html=raw.get("html") or "",
+            metadata=meta,
         )
