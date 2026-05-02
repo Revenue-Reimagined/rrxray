@@ -61,7 +61,7 @@ class AnthropicClient:
     ) -> AnthropicResponse:
         cache_args = {
             "model": model,
-            "system_prompt_hash": system_prompt,
+            "system_prompt": system_prompt,
             "user_message": user_message,
             "schema": response_schema.__name__,
         }
