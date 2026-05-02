@@ -1,0 +1,82 @@
+"""Schema round-trip and validation tests."""
+import json
+from datetime import date, datetime, timezone
+
+import pytest
+
+from rrxray.schemas.data import (
+    Finding,
+    InputParams,
+    ModuleFailure,
+    RunMetadata,
+    SourceCitation,
+    VoiceEvent,
+    XrayData,
+)
+from rrxray.schemas.pricing_packaging import (
+    HistoricalSnapshot,
+    PricingChange,
+    PricingPackagingData,
+    PricingTier,
+)
+
+
+def test_xray_data_round_trips_through_json():
+    data = XrayData(
+        domain="example.com",
+        run_metadata=RunMetadata(
+            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+            tool_version="0.1.0",
+            modes_built=["internal"],
+            model_used="claude-sonnet-4-6",
+        ),
+        inputs=InputParams(domain="example.com", mode="internal", model="claude-sonnet-4-6"),
+    )
+    serialized = data.model_dump_json()
+    restored = XrayData.model_validate(json.loads(serialized))
+    assert restored.domain == "example.com"
+    assert restored.collectors.pricing_packaging is None
+    assert restored.synthesizers.observed_gtm_motion is None
+    assert restored.voice_log == []
+    assert restored.failures == []
+
+
+def test_pricing_packaging_data_validates_change_kinds():
+    p = PricingPackagingData(
+        has_public_pricing=True,
+        is_contact_us_gated=False,
+        current_pricing_url="https://example.com/pricing",
+        current_tiers=[PricingTier(name="Pro", price="$50", cadence="per seat per month", notes="")],
+        detected_changes=[
+            PricingChange(
+                date_observed=date(2025, 11, 1),
+                kind="price_increased",
+                before="$40",
+                after="$50",
+            ),
+        ],
+    )
+    assert p.detected_changes[0].kind == "price_increased"
+
+
+def test_pricing_change_rejects_invalid_kind():
+    with pytest.raises(Exception):
+        PricingChange(date_observed=date.today(), kind="invalid_kind", before="x", after="y")
+
+
+def test_finding_requires_source():
+    with pytest.raises(Exception):
+        Finding(text="something")  # type: ignore[call-arg]
+
+
+def test_module_failure_serializable():
+    f = ModuleFailure(module="pricing_packaging", kind="collector", error="boom", traceback="...")
+    json.dumps(f.model_dump(mode="json"))
+
+
+def test_voice_event_action_constrained():
+    e = VoiceEvent(rule="forbidden_word", original="leverage", replacement="use",
+                   context="Section A para 0", action="substitute")
+    assert e.action == "substitute"
+    with pytest.raises(Exception):
+        VoiceEvent(rule="x", original="y", replacement=None, context="z", action="bogus")  # type: ignore[arg-type]
