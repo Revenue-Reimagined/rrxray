@@ -39,6 +39,8 @@ class VoiceViolationError(Exception):
 
 
 def _match_case(replacement: str, original: str) -> str:
+    if not original:
+        return replacement
     if original.isupper():
         return replacement.upper()
     if original[0].isupper():
@@ -66,9 +68,9 @@ class VoicePostProcessor:
 
     def _apply(self, text: str, context: str, on_violation: Literal["substitute", "raise"]) -> str:
         # Em dash check
-        for m in list(_EM_DASH_RE.finditer(text)):
-            original = m.group(0)
-            if on_violation == "raise":
+        if on_violation == "raise":
+            for m in _EM_DASH_RE.finditer(text):
+                original = m.group(0)
                 self._log.append(VoiceEvent(
                     rule="em_dash", original=original, replacement=None,
                     context=context, action="raise",
@@ -78,9 +80,9 @@ class VoicePostProcessor:
         text = _EM_DASH_RE.sub(lambda m: self._em_dash_replacement(m, text, context), text)
 
         # Forbidden word check
-        for m in list(_FORBIDDEN_RE.finditer(text)):
-            word = m.group(0)
-            if on_violation == "raise":
+        if on_violation == "raise":
+            for m in _FORBIDDEN_RE.finditer(text):
+                word = m.group(0)
                 self._log.append(VoiceEvent(
                     rule="forbidden_word", original=word, replacement=None,
                     context=context, action="raise",

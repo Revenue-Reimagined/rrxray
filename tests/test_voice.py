@@ -102,3 +102,8 @@ def test_em_dash_substitution_picks_colon_before_capital():
     assert ": First" in out
     out2 = v.process_collector_text("two parts — first and second", "ctx")
     assert "; first" in out2
+
+
+def test_match_case_handles_empty_string():
+    from rrxray.voice.rr_voice import _match_case
+    assert _match_case("use", "") == "use"
