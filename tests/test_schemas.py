@@ -1,20 +1,19 @@
 """Schema round-trip and validation tests."""
 import json
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import pytest
+from pydantic import ValidationError
 
 from rrxray.schemas.data import (
     Finding,
     InputParams,
     ModuleFailure,
     RunMetadata,
-    SourceCitation,
     VoiceEvent,
     XrayData,
 )
 from rrxray.schemas.pricing_packaging import (
-    HistoricalSnapshot,
     PricingChange,
     PricingPackagingData,
     PricingTier,
@@ -25,7 +24,7 @@ def test_xray_data_round_trips_through_json():
     data = XrayData(
         domain="example.com",
         run_metadata=RunMetadata(
-            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
             tool_version="0.1.0",
             modes_built=["internal"],
             model_used="claude-sonnet-4-6",
@@ -60,12 +59,12 @@ def test_pricing_packaging_data_validates_change_kinds():
 
 
 def test_pricing_change_rejects_invalid_kind():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         PricingChange(date_observed=date.today(), kind="invalid_kind", before="x", after="y")
 
 
 def test_finding_requires_source():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         Finding(text="something")  # type: ignore[call-arg]
 
 
@@ -78,5 +77,5 @@ def test_voice_event_action_constrained():
     e = VoiceEvent(rule="forbidden_word", original="leverage", replacement="use",
                    context="Section A para 0", action="substitute")
     assert e.action == "substitute"
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         VoiceEvent(rule="x", original="y", replacement=None, context="z", action="bogus")  # type: ignore[arg-type]

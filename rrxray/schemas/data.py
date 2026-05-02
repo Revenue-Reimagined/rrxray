@@ -73,8 +73,8 @@ class XrayData(BaseModel):
     company_name: str | None = None
     run_metadata: RunMetadata
     inputs: InputParams
-    collectors: CollectorOutputs = Field(default_factory=lambda: CollectorOutputs())
-    synthesizers: SynthesizerOutputs = Field(default_factory=lambda: SynthesizerOutputs())
+    collectors: CollectorOutputs = Field(default_factory=CollectorOutputs)
+    synthesizers: SynthesizerOutputs = Field(default_factory=SynthesizerOutputs)
     sources: list[SourceCitation] = []
     voice_log: list[VoiceEvent] = []
     failures: list[ModuleFailure] = []
