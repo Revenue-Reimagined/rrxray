@@ -63,3 +63,34 @@ def test_assert_no_unanonymized_passes_on_clean_text():
     a = Anonymizer()
     a.register_individual("Sarah Chen", "the VP")
     a.assert_no_unanonymized("the VP leads sales.")
+
+
+def test_substring_of_unrelated_word_not_replaced():
+    a = Anonymizer()
+    a.register_individual("Lee", "the CTO")
+    out = a.anonymize("Bradlee from Leeds met Lee.")
+    assert out == "Bradlee from Leeds met the CTO."
+
+
+def test_substring_does_not_trigger_assert_no_unanonymized():
+    a = Anonymizer()
+    a.register_individual("Lee", "the CTO")
+    # Should NOT raise; "Lee" appears as a substring of "Bradlee" / "Leeds" but not as a whole word
+    a.assert_no_unanonymized("Bradlee from Leeds.")
+
+
+def test_role_descriptor_with_backslash_not_interpreted_as_backreference():
+    a = Anonymizer()
+    a.register_individual("Sarah Chen", r"the VP \1 of Sales")
+    # The backslash-1 must be literal text, not a regex group reference
+    out = a.anonymize("Sarah Chen leads.")
+    assert out == r"the VP \1 of Sales leads."
+
+
+def test_word_boundary_matches_at_string_edges():
+    a = Anonymizer()
+    a.register_individual("Sarah", "the analyst")
+    # Name at start, end, and surrounded by punctuation
+    assert a.anonymize("Sarah leads.") == "the analyst leads."
+    assert a.anonymize("met Sarah") == "met the analyst"
+    assert a.anonymize("(Sarah)") == "(the analyst)"

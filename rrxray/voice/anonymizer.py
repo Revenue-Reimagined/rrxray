@@ -25,16 +25,31 @@ class Anonymizer:
         self.whitelisted_names.add(name)
 
     def anonymize(self, text: str) -> str:
-        # Longest names first so multi-word names are matched as a unit.
+        """Replace every registered, non-whitelisted name with its role descriptor.
+
+        Matching uses ASCII word boundaries (`\\b`); names that appear as substrings
+        of unrelated words are NOT replaced (e.g., 'Lee' won't match 'Bradlee').
+        Replacement is performed via a lambda to avoid regex backreference
+        interpretation (so role descriptors containing '\\1', '\\g<0>', etc. are
+        treated as literal text).
+        """
         for name in sorted(self.name_to_role.keys(), key=len, reverse=True):
             if name in self.whitelisted_names:
                 continue
-            text = re.sub(re.escape(name), self.name_to_role[name], text)
+            role = self.name_to_role[name]
+            pattern = r"\b" + re.escape(name) + r"\b"
+            text = re.sub(pattern, lambda _m, r=role: r, text)
         return text
 
     def assert_no_unanonymized(self, text: str) -> None:
+        """Raise AnonymityViolationError if any registered, non-whitelisted name
+        appears in `text` as a whole word. Defense in depth: callers must invoke
+        anonymize() before reaching here; this guard catches code paths that
+        bypass that filter.
+        """
         for name in self.name_to_role:
             if name in self.whitelisted_names:
                 continue
-            if name in text:
+            pattern = r"\b" + re.escape(name) + r"\b"
+            if re.search(pattern, text):
                 raise AnonymityViolationError(name, text)
