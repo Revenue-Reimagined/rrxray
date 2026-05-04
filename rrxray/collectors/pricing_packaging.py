@@ -16,6 +16,7 @@ from rrxray.schemas.pricing_packaging import (
     PricingTier,
 )
 from rrxray.services.firecrawl_client import FirecrawlError, ScrapedPage
+from rrxray.services.wayback_client import WaybackError
 
 NAME = "pricing_packaging"
 log = logging.getLogger(f"rrxray.collectors.{NAME}")
@@ -145,14 +146,19 @@ def _write_evidence(
     tiers: list[PricingTier],
 ) -> None:
     evidence_dir.mkdir(parents=True, exist_ok=True)
-    (evidence_dir / "current.md").write_text(current_page.markdown)
-    (evidence_dir / "current.html").write_text(current_page.html)
+    # Clean up stale wayback_*.md files from prior runs so the directory
+    # faithfully reflects this run's snapshots.
+    for stale in evidence_dir.glob("wayback_*.md"):
+        stale.unlink()
+    (evidence_dir / "current.md").write_text(current_page.markdown, encoding="utf-8")
+    (evidence_dir / "current.html").write_text(current_page.html, encoding="utf-8")
     (evidence_dir / "extracted_tiers.json").write_text(
-        json.dumps([t.model_dump() for t in tiers], indent=2)
+        json.dumps([t.model_dump() for t in tiers], indent=2),
+        encoding="utf-8",
     )
     for s in snapshots:
         ts = s.timestamp.strftime("%Y%m%d")
-        (evidence_dir / f"wayback_{ts}.md").write_text(s.markdown)
+        (evidence_dir / f"wayback_{ts}.md").write_text(s.markdown, encoding="utf-8")
 
 
 async def collect(ctx: CollectorContext) -> PricingPackagingData:
@@ -178,8 +184,8 @@ async def collect(ctx: CollectorContext) -> PricingPackagingData:
     snapshots = []
     try:
         snapshots = await ctx.wayback.snapshots(pricing_url, interval_months=6, span_months=18)
-    except Exception as e:
-        log.warning(f"wayback snapshots failed for {pricing_url}: {e}")
+    except WaybackError as e:
+        log.warning("wayback snapshots failed for %s: %s", pricing_url, e)
 
     historical: list[HistoricalSnapshot] = []
     detected_changes: list[PricingChange] = []

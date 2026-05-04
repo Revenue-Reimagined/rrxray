@@ -273,3 +273,25 @@ def test_collect_handles_extraction_failure_gracefully(tmp_path):
     result = asyncio.run(pricing_packaging.collect(ctx))
     assert result.has_public_pricing is False or result.current_tiers == []
     assert result.is_contact_us_gated is True
+
+
+def test_collect_cleans_up_stale_wayback_files(tmp_path):
+    """Re-running the collector replaces wayback_*.md from a prior run."""
+    md = "# Pricing\n## Pro\n$50/month"
+    ctx = make_ctx(tmp_path, scrape_responses={
+        "https://example.com/pricing": {
+            "markdown": md, "html": "<h1>Pricing</h1>",
+            "metadata": {"sourceURL": "https://example.com/pricing"},
+        },
+    })
+
+    # Pre-seed a stale wayback file from a "previous" run
+    evidence = tmp_path / "evidence" / "pricing_packaging"
+    evidence.mkdir(parents=True, exist_ok=True)
+    (evidence / "wayback_20240101.md").write_text("stale content from old run")
+    assert (evidence / "wayback_20240101.md").exists()
+
+    asyncio.run(pricing_packaging.collect(ctx))
+
+    # Stale file should be gone
+    assert not (evidence / "wayback_20240101.md").exists()
