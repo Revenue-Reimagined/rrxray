@@ -63,4 +63,9 @@ def render_internal(
     env.globals["voice_events"] = voice.peek_log
 
     template = env.get_template("report_internal.md.jinja")
-    return template.render(data=data)
+    rendered = template.render(data=data)
+
+    # Defense in depth: if any registered name reached the output unanonymized, raise.
+    anonymizer.assert_no_unanonymized(rendered)
+
+    return rendered

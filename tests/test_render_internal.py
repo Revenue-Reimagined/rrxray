@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from rrxray.rendering.markdown import render_internal
 from rrxray.schemas.data import (
     CollectorOutputs,
@@ -14,7 +16,7 @@ from rrxray.schemas.data import (
     XrayData,
 )
 from rrxray.schemas.pricing_packaging import PricingPackagingData, PricingTier
-from rrxray.voice.anonymizer import Anonymizer
+from rrxray.voice.anonymizer import AnonymityViolationError, Anonymizer
 from rrxray.voice.rr_voice import VoicePostProcessor
 
 
@@ -158,3 +160,23 @@ def test_known_limitations_section_present():
     out = render_internal(data, Anonymizer(), VoicePostProcessor())
     assert "### Known Limitations" in out
     assert "LinkedIn" in out
+
+
+def test_render_raises_if_anonymizer_misses_a_registered_name(monkeypatch):
+    """If the renderer's filter is bypassed and a registered name reaches the output, raise."""
+    narrative = ObservedGtmMotionNarrative(
+        narrative_paragraphs=["text without registered names"],
+        gap_bullets=["x"],
+        findings=[], gaps=[], discovery_questions=[],
+        model_used="x", cache_hit=False,
+    )
+    data = make_data(narrative=narrative)
+    a = Anonymizer()
+    a.register_individual("Sarah Chen", "the VP")
+
+    # Manually inject a name into the data after construction
+    data.synthesizers.observed_gtm_motion.narrative_paragraphs[0] = "Sarah Chen leads."
+    monkeypatch.setattr(a, "anonymize", lambda x: x)  # disable replacement
+
+    with pytest.raises(AnonymityViolationError):
+        render_internal(data, a, VoicePostProcessor())
