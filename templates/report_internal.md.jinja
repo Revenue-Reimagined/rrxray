@@ -1,0 +1,104 @@
+# GTM X-Ray™: {{ data.company_name or data.domain }}
+
+*Generated {{ data.run_metadata.timestamp.strftime("%Y-%m-%d") }} by Revenue Reimagined*
+*Tool version: {{ data.run_metadata.tool_version }} | Model: {{ data.run_metadata.model_used }}*
+
+---
+
+## 1. Executive Summary
+
+[Module not available for this domain in Phase 1: Executive Summary is generated in Phase 3 from the full report]
+
+---
+
+## 2. Section A: Observed GTM Motion
+
+{% if data.synthesizers.observed_gtm_motion %}
+{% for para in data.synthesizers.observed_gtm_motion.narrative_paragraphs %}
+{{ para | anonymize | voice_collector }}
+
+{% endfor %}
+
+**Gaps observed:**
+
+{% for bullet in data.synthesizers.observed_gtm_motion.gap_bullets %}
+→ {{ bullet | anonymize | voice_collector }}
+{% endfor %}
+{% else %}
+[Module not available for this domain]
+{% endif %}
+
+---
+
+## 3. Section B: Stability and Trajectory Signals
+
+[Module not available for this domain]
+
+---
+
+## 4. Section C: External Voice vs. Internal Voice
+
+[Module not available for this domain]
+
+---
+
+## 5. Module Detail Appendix
+
+{% if data.collectors.pricing_packaging %}
+### Pricing & Packaging
+
+{% include "_pricing_detail.md.jinja" %}
+{% else %}
+[Pricing module not available for this domain]
+{% endif %}
+
+---
+
+## 6. Discovery Questions
+
+{% set questions = collected_discovery_questions(data) %}
+{% if questions %}
+{% for q in questions %}
+- {{ q | anonymize }}
+{% endfor %}
+{% else %}
+(none compiled)
+{% endif %}
+
+---
+
+## 7. Sources & Methodology
+
+### Sources
+
+{% for source in data.sources %}
+- [{{ source.url }}]({{ source.url }}) — scraped {{ source.timestamp.strftime("%Y-%m-%d %H:%M UTC") }}{% if source.evidence_path %} → `evidence/{{ source.evidence_path }}`{% endif %}
+{% endfor %}
+
+### Voice Adjustments
+
+{% set events = voice_events() %}
+{% if events %}
+{% for event in events %}
+- **{{ event.rule }}** ({{ event.action }}): `{{ event.original }}`{% if event.replacement %} → `{{ event.replacement }}`{% endif %} — {{ event.context }}
+{% endfor %}
+{% else %}
+(none)
+{% endif %}
+
+### Module Failures
+
+{% if data.failures %}
+{% for failure in data.failures %}
+- **{{ failure.module }}** ({{ failure.kind }}): {{ failure.error }}
+{% endfor %}
+{% else %}
+(none — all modules ran successfully)
+{% endif %}
+
+### Known Limitations
+
+- LinkedIn employee count and individual tenure are not reliably scrapable. The leadership_stability collector (Phase 2) uses Google cache snippets via Firecrawl search and labels these "best-effort estimate".
+- Crunchbase full data is paywalled. The funding_trajectory collector (Phase 2) scrapes the public profile only.
+- Free-tier SEO data only. No keyword volume, no full backlink profile.
+- Phase 1 ships with one collector (pricing_packaging) and one synthesizer (Section A). Phase 2 widens both surfaces.

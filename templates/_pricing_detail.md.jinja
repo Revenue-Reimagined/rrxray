@@ -1,0 +1,42 @@
+{% set p = data.collectors.pricing_packaging %}
+**Public pricing page:** {% if p.has_public_pricing %}{{ p.current_pricing_url }}{% else %}Not found; pricing appears contact-sales gated{% endif %}
+
+{% if p.current_tiers %}
+**Current tiers:**
+
+| Tier | Price | Cadence | Notes |
+|---|---|---|---|
+{% for t in p.current_tiers %}
+| {{ t.name }} | {{ t.price }} | {{ t.cadence }} | {{ t.notes | voice_collector }} |
+{% endfor %}
+{% endif %}
+
+{% if p.detected_changes %}
+**Pricing changes observed (last 18 months):**
+
+{% for c in p.detected_changes %}
+- {{ c.date_observed }}: {{ c.kind }} — `{{ c.before }}` → `{{ c.after }}`
+{% endfor %}
+{% endif %}
+
+{% if p.findings %}
+**Findings:**
+
+{% for f in p.findings %}
+- {{ f.text | voice_collector }} *(source: [{{ f.source.url }}]({{ f.source.url }}){% if f.source.evidence_path %}; evidence: `{{ f.source.evidence_path }}`{% endif %})*
+{% endfor %}
+{% endif %}
+
+{% if p.gaps %}
+**Gaps:**
+{% for g in p.gaps %}
+→ {{ g | voice_collector }}
+{% endfor %}
+{% endif %}
+
+{% if p.discovery_questions %}
+**Discovery questions:**
+{% for q in p.discovery_questions %}
+- {{ q }}
+{% endfor %}
+{% endif %}
