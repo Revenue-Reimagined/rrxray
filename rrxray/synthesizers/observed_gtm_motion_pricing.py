@@ -62,20 +62,36 @@ async def synthesize(ctx: SynthesizerContext) -> ObservedGtmMotionNarrative | No
     )
 
     paragraphs = [
-        ctx.voice.process_synthesizer_text(p, context=f"observed_gtm_motion para {i}")
+        ctx.voice.process_synthesizer_text(p, context=f"{NAME} para {i}")
         for i, p in enumerate(response.parsed.narrative_paragraphs)
     ]
     gap_bullets = [
-        ctx.voice.process_synthesizer_text(g, context=f"observed_gtm_motion gap {i}")
+        ctx.voice.process_synthesizer_text(g, context=f"{NAME} gap {i}")
         for i, g in enumerate(response.parsed.gap_bullets)
     ]
+    gaps = [
+        ctx.voice.process_synthesizer_text(g, context=f"{NAME} gap-label {i}")
+        for i, g in enumerate(response.parsed.gaps)
+    ]
+    discovery_questions = [
+        ctx.voice.process_synthesizer_text(q, context=f"{NAME} discovery {i}")
+        for i, q in enumerate(response.parsed.discovery_questions)
+    ]
+    # Findings have a text field that needs processing; preserve the source citation.
+    findings = []
+    for i, f in enumerate(response.parsed.findings):
+        cleaned_text = ctx.voice.process_synthesizer_text(
+            f.text, context=f"{NAME} finding {i}"
+        )
+        # Re-construct Finding to keep immutability on the source citation
+        findings.append(Finding(text=cleaned_text, source=f.source))
 
     return ObservedGtmMotionNarrative(
         narrative_paragraphs=paragraphs,
         gap_bullets=gap_bullets,
-        findings=response.parsed.findings,
-        gaps=response.parsed.gaps,
-        discovery_questions=response.parsed.discovery_questions,
+        findings=findings,
+        gaps=gaps,
+        discovery_questions=discovery_questions,
         model_used=response.model_used,
         cache_hit=response.cache_hit,
     )

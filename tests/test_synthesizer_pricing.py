@@ -148,3 +148,69 @@ def test_synth_records_cache_hit():
     ctx = make_synth_ctx(pricing, response)
     result = asyncio.run(observed_gtm_motion_pricing.synthesize(ctx))
     assert result.cache_hit is True
+
+
+def test_synth_voice_processes_gap_bullets():
+    pricing = PricingPackagingData(
+        has_public_pricing=True, is_contact_us_gated=False,
+        current_pricing_url="https://example.com/pricing",
+    )
+    from rrxray.voice.rr_voice import VoiceViolationError
+    ctx = make_synth_ctx(pricing, make_anthropic_response(
+        ["Clean paragraph."],
+        ["We leverage data here."],  # forbidden word in bullet
+    ))
+    with pytest.raises(VoiceViolationError):
+        asyncio.run(observed_gtm_motion_pricing.synthesize(ctx))
+
+
+def test_synth_voice_processes_discovery_questions():
+    pricing = PricingPackagingData(
+        has_public_pricing=True, is_contact_us_gated=False,
+        current_pricing_url="https://example.com/pricing",
+    )
+    from rrxray.voice.rr_voice import VoiceViolationError
+    ctx = make_synth_ctx(pricing, make_anthropic_response(
+        ["Clean."], ["clean bullet"],
+        questions=["What synergies exist between teams?"],  # forbidden word
+    ))
+    with pytest.raises(VoiceViolationError):
+        asyncio.run(observed_gtm_motion_pricing.synthesize(ctx))
+
+
+def test_synth_voice_processes_finding_text():
+    pricing = PricingPackagingData(
+        has_public_pricing=True, is_contact_us_gated=False,
+        current_pricing_url="https://example.com/pricing",
+    )
+    from datetime import UTC, datetime
+
+    from rrxray.schemas._shared import Finding, SourceCitation
+    from rrxray.voice.rr_voice import VoiceViolationError
+
+    finding = Finding(
+        text="Pricing is impactful for the GTM motion.",  # forbidden word
+        source=SourceCitation(
+            url="https://example.com/pricing",
+            timestamp=datetime(2026, 5, 1, tzinfo=UTC),
+        ),
+    )
+    ctx = make_synth_ctx(pricing, make_anthropic_response(
+        ["Clean."], ["clean bullet"], findings=[finding],
+    ))
+    with pytest.raises(VoiceViolationError):
+        asyncio.run(observed_gtm_motion_pricing.synthesize(ctx))
+
+
+def test_synth_voice_processes_gaps_field():
+    pricing = PricingPackagingData(
+        has_public_pricing=True, is_contact_us_gated=False,
+        current_pricing_url="https://example.com/pricing",
+    )
+    from rrxray.voice.rr_voice import VoiceViolationError
+    ctx = make_synth_ctx(pricing, make_anthropic_response(
+        ["Clean."], ["clean bullet"],
+        gaps=["holistic approach to pricing"],  # forbidden word
+    ))
+    with pytest.raises(VoiceViolationError):
+        asyncio.run(observed_gtm_motion_pricing.synthesize(ctx))
