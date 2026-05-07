@@ -152,6 +152,58 @@ def test_snapshots_tolerates_transient_availability_error(tmp_path: Path, fake_f
 
 
 @freeze_time("2026-05-01T12:00:00Z")
+def test_503_retries_then_succeeds(tmp_path: Path, fake_firecrawl, monkeypatch):
+    """Wayback 503 should be retried up to 2 additional times before failing."""
+    # Patch asyncio.sleep to avoid real delays in tests
+    monkeypatch.setattr("rrxray.services.wayback_client.asyncio.sleep", AsyncMock())
+
+    httpx_client = MagicMock()
+    call_count = 0
+
+    async def get_side_effect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        response = MagicMock()
+        if call_count < 3:
+            # First two calls 503
+            error_response = MagicMock(status_code=503)
+            response.raise_for_status = MagicMock(
+                side_effect=httpx.HTTPStatusError(
+                    "503 Service Unavailable", request=MagicMock(), response=error_response,
+                )
+            )
+        else:
+            response.json.return_value = {
+                "archived_snapshots": {
+                    "closest": {
+                        "available": True,
+                        "url": "https://web.archive.org/web/20260501/https://example.com/pricing",
+                        "timestamp": "20260501000000",
+                    },
+                },
+            }
+            response.raise_for_status = MagicMock()
+        return response
+
+    httpx_client.get = AsyncMock(side_effect=get_side_effect)
+    httpx_client.__aenter__ = AsyncMock(return_value=httpx_client)
+    httpx_client.__aexit__ = AsyncMock(return_value=None)
+
+    w = WaybackClient(
+        firecrawl=fake_firecrawl,
+        cache=DiskCache(dir=tmp_path, mode="live"),
+        _httpx_client_factory=lambda: httpx_client,
+    )
+    snapshots = asyncio.run(w.snapshots(
+        "https://example.com/pricing", interval_months=18, span_months=18,
+    ))
+    # 2 targets (now + 18mo back); first target needs 3 attempts (call_count hits 3 on target 1),
+    # second target succeeds on attempt 1
+    assert call_count >= 3
+    assert len(snapshots) >= 1
+
+
+@freeze_time("2026-05-01T12:00:00Z")
 def test_snapshots_tolerates_firecrawl_scrape_failure(tmp_path: Path, fake_httpx):
     """When Firecrawl raises for one snapshot, later targets still succeed."""
     from rrxray.services.firecrawl_client import FirecrawlError

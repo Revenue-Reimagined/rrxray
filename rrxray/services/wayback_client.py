@@ -82,22 +82,46 @@ class WaybackClient:
         return results
 
     async def _lookup_archive_url(self, url: str, target: datetime) -> str | None:
+        import httpx
+
         ts_str = target.strftime("%Y%m%d000000")
         cache_args = {"url": url, "timestamp": ts_str}
 
         async def upstream() -> dict[str, Any]:
             api_url = "https://archive.org/wayback/available"
             params = {"url": url, "timestamp": ts_str}
-            async with self._httpx_client_factory() as client:
-                try:
-                    response = await client.get(api_url, params=params)
-                    response.raise_for_status()
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    log.warning("Wayback availability check failed: %s", e)
-                    raise WaybackError(f"availability lookup failed: {e}") from e
-                return response.json()
+            last_error: Exception | None = None
+            for attempt in range(3):
+                async with self._httpx_client_factory() as client:
+                    try:
+                        response = await client.get(api_url, params=params)
+                        response.raise_for_status()
+                    except asyncio.CancelledError:
+                        raise
+                    except (httpx.ConnectError, httpx.TimeoutException) as e:
+                        last_error = e
+                        log.warning(
+                            "Wayback transient error (attempt %d/3): %s", attempt + 1, e,
+                        )
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code in (502, 503, 504) and attempt < 2:
+                            last_error = e
+                            log.warning(
+                                "Wayback %d (attempt %d/3): %s",
+                                e.response.status_code, attempt + 1, e,
+                            )
+                        else:
+                            raise WaybackError(f"availability lookup failed: {e}") from e
+                    except Exception as e:
+                        raise WaybackError(f"availability lookup failed: {e}") from e
+                    else:
+                        return response.json()
+                if attempt < 2:
+                    await asyncio.sleep(2 ** attempt)  # 1s, 2s
+            # Exhausted retries
+            raise WaybackError(
+                f"availability lookup failed after 3 attempts: {last_error}",
+            ) from last_error
 
         payload = await self.cache.get_or_call("wayback.available", cache_args, upstream)
         closest = payload.get("archived_snapshots", {}).get("closest")
