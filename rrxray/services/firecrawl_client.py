@@ -23,6 +23,13 @@ class ScrapedPage(BaseModel):
     metadata: dict[str, Any] = {}
 
 
+class SearchResult(BaseModel):
+    url: str
+    title: str = ""
+    description: str = ""
+    metadata: dict[str, Any] = {}
+
+
 class FirecrawlClient:
     def __init__(
         self,
@@ -82,3 +89,52 @@ class FirecrawlClient:
             html=raw.get("html") or "",
             metadata=meta,
         )
+
+    async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
+        """Web search via Firecrawl SDK.
+
+        Returns up to `limit` results. Same cache layer as scrape_url.
+        """
+        args = {"query": query, "limit": limit}
+
+        async def upstream() -> list[dict[str, Any]]:
+            async with self._semaphore:
+                try:
+                    response = await asyncio.to_thread(
+                        self._sdk.search, query, limit=limit,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    log.warning("Firecrawl search failed for %r: %s", query, e)
+                    raise FirecrawlError(f"search({query!r}) failed: {e}") from e
+
+            if hasattr(response, "model_dump"):
+                payload = response.model_dump()
+                if isinstance(payload, dict):
+                    return payload.get("results", payload.get("data", []))
+                return []
+            if isinstance(response, list):
+                return response
+            return []
+
+        raw = await self.cache.get_or_call("firecrawl.search", args, upstream)
+        results: list[SearchResult] = []
+        for r in raw or []:
+            if not isinstance(r, dict):
+                continue
+            results.append(SearchResult(
+                url=r.get("url", ""),
+                title=r.get("title", ""),
+                description=(
+                    r.get("description")
+                    or r.get("snippet")
+                    or r.get("excerpt")
+                    or ""
+                ),
+                metadata={
+                    k: v for k, v in r.items()
+                    if k not in {"url", "title", "description", "snippet", "excerpt"}
+                },
+            ))
+        return results

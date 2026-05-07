@@ -72,3 +72,54 @@ def test_concurrency_cap_via_semaphore(tmp_path: Path):
         api_key="k", cache=DiskCache(dir=tmp_path, mode="live"), _sdk=sdk, max_concurrent=3,
     )
     assert c._semaphore._value == 3
+
+
+def test_search_returns_search_results(client, fake_sdk):
+    """search() wraps SDK results into SearchResult objects."""
+    fake_sdk.search.return_value = [
+        {"url": "https://www.linkedin.com/jobs/view/12345",
+         "title": "Account Executive at Acme Corp",
+         "description": "Sell to enterprise customers..."},
+        {"url": "https://www.linkedin.com/jobs/view/67890",
+         "title": "SDR at Acme Corp",
+         "description": "Inbound and outbound..."},
+    ]
+
+    results = asyncio.run(client.search("site:linkedin.com/jobs Acme Corp"))
+
+    from rrxray.services.firecrawl_client import SearchResult
+    assert len(results) == 2
+    assert isinstance(results[0], SearchResult)
+    assert results[0].url == "https://www.linkedin.com/jobs/view/12345"
+    assert results[0].title == "Account Executive at Acme Corp"
+    assert "enterprise" in results[0].description
+
+
+def test_search_caches_result(client, fake_sdk):
+    fake_sdk.search.return_value = [
+        {"url": "https://example.com", "title": "x", "description": "y"},
+    ]
+    asyncio.run(client.search("test query"))
+    asyncio.run(client.search("test query"))
+    assert fake_sdk.search.call_count == 1
+
+
+def test_search_handles_firecrawl_error(client, fake_sdk):
+    fake_sdk.search.side_effect = RuntimeError("simulated failure")
+
+    from rrxray.services.firecrawl_client import FirecrawlError
+    with pytest.raises(FirecrawlError):
+        asyncio.run(client.search("test query"))
+
+
+def test_search_returns_empty_list_when_no_results(client, fake_sdk):
+    fake_sdk.search.return_value = []
+    results = asyncio.run(client.search("query with no matches"))
+    assert results == []
+
+
+def test_search_passes_limit_to_sdk(client, fake_sdk):
+    fake_sdk.search.return_value = []
+    asyncio.run(client.search("test", limit=5))
+    args, kwargs = fake_sdk.search.call_args
+    assert kwargs.get("limit") == 5 or (len(args) > 1 and args[1] == 5)
