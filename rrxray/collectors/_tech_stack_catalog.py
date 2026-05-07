@@ -127,4 +127,44 @@ SIGNATURES: list[dict[str, str]] = [
      "pattern": r"cdn\.bizible\.com/scripts/bizible\.js", "confidence": "high"},
     {"tool": "Clearbit Reveal", "category": "attribution", "id": "clearbit:strict_reveal",
      "pattern": r"x\.clearbitjs\.com/v\d+/clearbit\.js", "confidence": "high"},
+
+    # ---- DOM-level loose signatures (catch tools whose <script> tags
+    #      get stripped by Firecrawl but DOM artifacts survive) ----
+
+    # HubSpot DOM artifacts
+    {"tool": "HubSpot", "category": "marketing_automation", "id": "hubspot:loose_dom_theme",
+     "pattern": r'data-hubspot-theme=', "confidence": "low"},
+    {"tool": "HubSpot", "category": "marketing_automation", "id": "hubspot:loose_dom_anchor",
+     "pattern": r'hs-web-interactives-top-push-anchor', "confidence": "low"},
+    {"tool": "HubSpot", "category": "marketing_automation", "id": "hubspot:loose_dom_meetings",
+     "pattern": r'meetings\.hubspot\.com', "confidence": "low"},
+
+    # Google Tag Manager noscript iframe fallback
+    {"tool": "Google Tag Manager", "category": "tag_manager", "id": "gtm:loose_noscript_iframe",
+     "pattern": r'<iframe[^>]+src="https://www\.googletagmanager\.com/ns\.html\?id=GTM-',
+     "confidence": "low"},
+
+    # Drift DOM markers
+    {"tool": "Drift", "category": "chat", "id": "drift:loose_dom_frame",
+     "pattern": r'drift-frame-controller|drift-widget', "confidence": "low"},
+
+    # Intercom DOM markers
+    {"tool": "Intercom", "category": "chat", "id": "intercom:loose_dom_launcher",
+     "pattern": r'intercom-launcher|intercom-frame', "confidence": "low"},
+
+    # Pendo DOM markers (resource centers, in-app guides leave DOM artifacts)
+    {"tool": "Pendo", "category": "product_analytics", "id": "pendo:loose_dom_resource_center",
+     "pattern": r'pendo-resource-center|data-elem-id="pendo-', "confidence": "low"},
+
+    # Segment inline-script global usage
+    {"tool": "Segment", "category": "cdp", "id": "segment:loose_inline_call",
+     "pattern": r'\banalytics\.(?:track|identify|page)\s*\(', "confidence": "low"},
+
+    # Mixpanel inline globals
+    {"tool": "Mixpanel", "category": "analytics", "id": "mixpanel:loose_inline_call",
+     "pattern": r'\bmixpanel\.(?:track|identify|init)\s*\(', "confidence": "low"},
+
+    # Amplitude inline globals
+    {"tool": "Amplitude", "category": "analytics", "id": "amplitude:loose_inline_call",
+     "pattern": r'amplitude\.(?:getInstance|track|init)\s*\(', "confidence": "low"},
 ]

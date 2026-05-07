@@ -73,3 +73,17 @@ def test_catalog_includes_specs_named_tools():
     }
     missing = expected - tool_names
     assert not missing, f"spec-named tools missing from catalog: {missing}"
+
+
+def test_catalog_includes_dom_level_loose_signatures():
+    """Catalog must include DOM-level loose signatures for tools whose script tags get stripped."""
+    dom_loose_ids = [s["id"] for s in SIGNATURES if "loose_dom" in s["id"] or "loose_noscript" in s["id"] or "loose_inline" in s["id"]]
+    assert len(dom_loose_ids) >= 10, (
+        f"expected at least 10 DOM-level loose signatures (catch tools whose <script> tags "
+        f"get stripped by Firecrawl); got {len(dom_loose_ids)}: {dom_loose_ids}"
+    )
+
+
+def test_catalog_grew_to_at_least_45_entries():
+    """Phase 2.1a-fix added DOM signatures; total catalog size should be 45+."""
+    assert len(SIGNATURES) >= 45

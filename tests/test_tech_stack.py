@@ -290,3 +290,52 @@ def test_collect_no_detections_returns_findings_about_emptiness(tmp_path):
     assert result.detected_tools == []
     assert len(result.findings) == 1
     assert "no analytics" in result.findings[0].text.lower() or "no tags" in result.findings[0].text.lower()
+
+
+def test_detect_hubspot_dom_only_returns_low_confidence():
+    """When HubSpot script is stripped but DOM markers survive, low-confidence detection fires."""
+    html = _load("hubspot_dom_only.html")
+    detected = tech_stack._detect(html)
+    hubspot = [t for t in detected if t.name == "HubSpot"]
+    assert len(hubspot) == 1
+    assert hubspot[0].confidence == "low"
+    # Signature ID should be one of the DOM-level ones, not the script-URL ones
+    assert hubspot[0].signature_id.startswith("hubspot:loose_dom_")
+
+
+def test_detect_gtm_noscript_iframe():
+    """GTM's noscript fallback iframe is a reliable detection target."""
+    html = _load("gtm_noscript.html")
+    detected = tech_stack._detect(html)
+    gtm = [t for t in detected if t.name == "Google Tag Manager"]
+    assert len(gtm) == 1
+    # Loose detection by ID — the noscript signature is loose-tier
+    assert gtm[0].signature_id == "gtm:loose_noscript_iframe"
+
+
+def test_detect_intercom_dom_only():
+    """Intercom DOM mount points trigger low-confidence detection."""
+    html = _load("intercom_dom_only.html")
+    detected = tech_stack._detect(html)
+    intercom = [t for t in detected if t.name == "Intercom"]
+    assert len(intercom) == 1
+    assert intercom[0].confidence == "low"
+
+
+def test_strict_url_overrides_dom_loose():
+    """When both the script-URL strict signature AND the DOM loose signature match,
+    the strict (high-confidence) one wins per the existing dedupe rule."""
+    html = """
+    <html lang="en-US" data-hubspot-theme="canvas-light">
+    <head>
+    <script src="https://js.hs-scripts.com/12345.js"></script>
+    </head>
+    <body>
+    <div id="hs-web-interactives-top-push-anchor"></div>
+    </body></html>
+    """
+    detected = tech_stack._detect(html)
+    hubspot = [t for t in detected if t.name == "HubSpot"]
+    assert len(hubspot) == 1
+    assert hubspot[0].confidence == "high"
+    assert hubspot[0].signature_id == "hubspot:strict_js"
