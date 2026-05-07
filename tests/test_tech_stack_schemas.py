@@ -1,10 +1,11 @@
 """TechStackData / DetectedTool schema round-trip + validation."""
 import json
+from typing import get_args
 
 import pytest
 from pydantic import ValidationError
 
-from rrxray.schemas.tech_stack import DetectedTool, TechStackData
+from rrxray.schemas.tech_stack import Category, DetectedTool, TechStackData
 
 
 def test_detected_tool_minimal():
@@ -77,9 +78,20 @@ def test_category_literal_includes_all_nine():
         "analytics", "tag_manager", "marketing_automation", "chat",
         "product_analytics", "crm", "cdp", "ab_testing", "attribution",
     }
-    # Pydantic stores the Literal args; cross-check via a probe
-    for cat in expected:
+    actual = set(get_args(Category))
+    assert actual == expected, f"Category mismatch: missing={expected - actual}, extra={actual - expected}"
+    # Probe each one to confirm pydantic accepts it as a valid value
+    for cat in get_args(Category):
         DetectedTool(
-            name="probe", category=cat, confidence="high",  # type: ignore[arg-type]
+            name="probe", category=cat, confidence="high",
             signature_id="x", matched_text="x",
         )
+
+
+def test_detected_tool_accepts_low_confidence():
+    """Both 'high' and 'low' must be accepted as valid confidence values."""
+    t = DetectedTool(
+        name="HubSpot", category="marketing_automation", confidence="low",
+        signature_id="hubspot:loose_form", matched_text="hsforms.net",
+    )
+    assert t.confidence == "low"
