@@ -199,3 +199,81 @@ def test_extract_roles_returns_empty_for_html_with_no_links():
         base_url="https://acme.com",
     )
     assert roles == []
+
+
+def test_linkedin_search_jobs_parses_results(tmp_path):
+    ctx = _make_ctx(tmp_path, search_responses={
+        "site:linkedin.com/jobs": [
+            {"url": "https://www.linkedin.com/jobs/view/123",
+             "title": "Account Executive at Acme Corp",
+             "description": "Sell to enterprise..."},
+            {"url": "https://www.linkedin.com/jobs/view/456",
+             "title": "SDR at Acme Corp",
+             "description": "Outbound prospecting..."},
+            {"url": "https://www.linkedin.com/jobs/view/789",
+             "title": "Senior Engineer at Acme Corp",
+             "description": "Build the platform..."},
+        ],
+    })
+    roles = asyncio.run(revenue_motion._linkedin_search_jobs(ctx.firecrawl, "acme.com"))
+    assert len(roles) == 3
+    titles = [r.title for r in roles]
+    assert "Account Executive at Acme Corp" in titles
+    cat_map = {r.title: r.category for r in roles}
+    assert cat_map["Account Executive at Acme Corp"] == "ae"
+    assert all(r.source == "linkedin" for r in roles)
+
+
+def test_linkedin_search_jobs_empty_when_no_results(tmp_path):
+    ctx = _make_ctx(tmp_path, search_responses={})
+    roles = asyncio.run(revenue_motion._linkedin_search_jobs(ctx.firecrawl, "acme.com"))
+    assert roles == []
+
+
+def test_linkedin_search_jobs_swallows_firecrawl_error(tmp_path):
+    """Search failure must NOT raise — collector continues with careers data."""
+    ctx = _make_ctx(tmp_path)
+
+    async def fail(query, limit=10):
+        from rrxray.services.firecrawl_client import FirecrawlError
+        raise FirecrawlError("simulated failure")
+
+    ctx.firecrawl.search = AsyncMock(side_effect=fail)
+    roles = asyncio.run(revenue_motion._linkedin_search_jobs(ctx.firecrawl, "acme.com"))
+    assert roles == []
+
+
+def test_linkedin_employee_count_parses_snippet(tmp_path):
+    ctx = _make_ctx(tmp_path, search_responses={
+        "site:linkedin.com/company": [
+            {"url": "https://www.linkedin.com/company/acme",
+             "title": "Acme Corp | LinkedIn",
+             "description": "Acme Corp · Software · 247 employees on LinkedIn ..."},
+        ],
+    })
+    count = asyncio.run(revenue_motion._linkedin_employee_count(ctx.firecrawl, "acme.com"))
+    assert count == 247
+
+
+def test_linkedin_employee_count_returns_none_when_snippet_unparseable(tmp_path):
+    ctx = _make_ctx(tmp_path, search_responses={
+        "site:linkedin.com/company": [
+            {"url": "https://www.linkedin.com/company/acme",
+             "title": "Acme | LinkedIn",
+             "description": "no number in this description"},
+        ],
+    })
+    count = asyncio.run(revenue_motion._linkedin_employee_count(ctx.firecrawl, "acme.com"))
+    assert count is None
+
+
+def test_linkedin_employee_count_handles_search_failure(tmp_path):
+    ctx = _make_ctx(tmp_path)
+
+    async def fail(query, limit=10):
+        from rrxray.services.firecrawl_client import FirecrawlError
+        raise FirecrawlError("boom")
+
+    ctx.firecrawl.search = AsyncMock(side_effect=fail)
+    count = asyncio.run(revenue_motion._linkedin_employee_count(ctx.firecrawl, "acme.com"))
+    assert count is None

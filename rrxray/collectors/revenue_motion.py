@@ -104,3 +104,61 @@ def _extract_roles(html: str, source: str, base_url: str) -> list[JobPosting]:
             matched_keyword=matched,
         ))
     return roles
+
+
+async def _linkedin_search_jobs(firecrawl, domain: str) -> list[JobPosting]:
+    """Search Google for LinkedIn job postings mentioning the domain.
+
+    Best-effort. Returns empty list on search failure or no results.
+    """
+    from rrxray.services.firecrawl_client import FirecrawlError
+
+    query = f'site:linkedin.com/jobs "{domain}"'
+    try:
+        results = await firecrawl.search(query, limit=10)
+    except FirecrawlError as e:
+        log.warning("LinkedIn jobs search failed for %s: %s", domain, e)
+        return []
+
+    roles: list[JobPosting] = []
+    for r in results:
+        title = r.title.strip()
+        if not title:
+            continue
+        category, matched = _categorize_title(title)
+        roles.append(JobPosting(
+            title=title,
+            category=category,  # type: ignore[arg-type]
+            url=r.url or None,
+            source="linkedin",
+            matched_keyword=matched,
+        ))
+    return roles
+
+
+_EMPLOYEE_COUNT_RE = re.compile(r"([\d,]+)\s+employees", re.IGNORECASE)
+
+
+async def _linkedin_employee_count(firecrawl, domain: str) -> int | None:
+    """Search Google for the LinkedIn company snippet and parse '<N> employees'.
+
+    Returns int or None. Best-effort.
+    """
+    from rrxray.services.firecrawl_client import FirecrawlError
+
+    query = f'"{domain}" employees site:linkedin.com/company'
+    try:
+        results = await firecrawl.search(query, limit=3)
+    except FirecrawlError as e:
+        log.warning("LinkedIn employee count search failed for %s: %s", domain, e)
+        return None
+
+    for r in results:
+        haystack = " ".join([r.title, r.description])
+        m = _EMPLOYEE_COUNT_RE.search(haystack)
+        if m:
+            try:
+                return int(m.group(1).replace(",", ""))
+            except ValueError:
+                continue
+    return None
