@@ -1,14 +1,16 @@
 # rrxray Roadmap
 
-**Last updated:** 2026-05-02
+**Last updated:** 2026-05-07
 
 The Phase 1 foundation has shipped. This file tracks what's next, what's deferred, and the design decisions behind each.
+
+> **Cross-session continuity:** every phase milestone produces a checkpoint document at `docs/checkpoints/<date>-<phase-id>-checkpoint.md`. See [`CLAUDE.md`](CLAUDE.md) for the mandatory checkpoint rule. Most recent checkpoint: [`2026-05-07-phase-1-foundation-checkpoint.md`](docs/checkpoints/2026-05-07-phase-1-foundation-checkpoint.md).
 
 ---
 
 ## Phase 1: Foundation (shipped)
 
-23 tasks across 7 sub-phases on `feat/phase-1-foundation` (33 commits, 122 tests passing + 1 e2e smoke awaiting fixture bootstrap).
+23 tasks across 7 sub-phases on `feat/phase-1-foundation` (36 commits, 126 tests passing + 1 e2e smoke awaiting fixture bootstrap). Two real live runs against `sqaservices.com` and `swayable.com` produced clean reports.
 
 **What works today:**
 
