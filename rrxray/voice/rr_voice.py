@@ -58,6 +58,16 @@ class VoicePostProcessor:
     def process_synthesizer_text(self, text: str, context: str) -> str:
         return self._apply(text, context, on_violation="raise")
 
+    def sanitize_llm_output(self, text: str, context: str) -> str:
+        """Substitute em-dashes (LLM punctuation the prompt can't fully suppress).
+
+        Call this as a pre-pass on raw LLM strings before process_synthesizer_text.
+        Em-dashes are converted to colon or semicolon per house style.
+        Forbidden words and trademarks are NOT touched here; process_synthesizer_text
+        still raises on those so vocabulary discipline remains strict.
+        """
+        return _EM_DASH_RE.sub(lambda m: self._em_dash_replacement(m, text, context), text)
+
     def peek_log(self) -> list[VoiceEvent]:
         return list(self._log)
 

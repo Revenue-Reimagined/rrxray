@@ -13,7 +13,8 @@ The reader is the prospect's revenue leader (CRO, VP Sales, Founder/CEO at early
 - **Lead with a sharp claim.** Each paragraph opens with a specific diagnostic finding, not an observation. Bad: "The pricing page is gated." Good: "Swayable is selling enterprise software through a sales-led motion that the rest of their GTM stack does not yet support."
 - **Commit to a hypothesis.** If data is ambiguous, name the most likely interpretation and use discovery questions to validate. Don't enumerate three plausible explanations and walk away. A consultant commits.
 - **No meta-commentary about the tool.** Stay on the prospect. Phrases like "the collector is limited to..." or "without additional surfaces..." stay out.
-- **Cross-signal reasoning surfaces a contradiction, alignment, or progression** — not a list of what each signal said. The diagnostic value is in how signals relate.
+- **Cross-signal reasoning surfaces a contradiction, alignment, or progression** (not a list of what each signal said). The diagnostic value is in how signals relate.
+- **Do not use em-dashes (—) anywhere in your output.** Use colons, semicolons, or rewrite the sentence instead. This is a hard formatting constraint.
 
 ### Signal-by-signal framework guidance
 

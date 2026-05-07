@@ -118,28 +118,33 @@ async def synthesize(ctx: SynthesizerContext) -> ObservedGtmMotionNarrative | No
         response_schema=NarrativeResponse,
     )
 
-    # Voice post-processing on every synthesizer-generated string
+    # Voice post-processing on every synthesizer-generated string.
+    # sanitize_llm_output runs first to substitute em-dashes (punctuation the
+    # LLM can produce despite instructions); process_synthesizer_text then raises
+    # on forbidden vocabulary, which IS fully controllable via prompt.
+    def _voice(text: str, ctx_label: str) -> str:
+        clean = ctx.voice.sanitize_llm_output(text, context=ctx_label)
+        return ctx.voice.process_synthesizer_text(clean, context=ctx_label)
+
     paragraphs = [
-        ctx.voice.process_synthesizer_text(p, context=f"{NAME} para {i}")
+        _voice(p, f"{NAME} para {i}")
         for i, p in enumerate(response.parsed.narrative_paragraphs)
     ]
     gap_bullets = [
-        ctx.voice.process_synthesizer_text(g, context=f"{NAME} gap {i}")
+        _voice(g, f"{NAME} gap {i}")
         for i, g in enumerate(response.parsed.gap_bullets)
     ]
     gaps = [
-        ctx.voice.process_synthesizer_text(g, context=f"{NAME} gap-label {i}")
+        _voice(g, f"{NAME} gap-label {i}")
         for i, g in enumerate(response.parsed.gaps)
     ]
     discovery_questions = [
-        ctx.voice.process_synthesizer_text(q, context=f"{NAME} discovery {i}")
+        _voice(q, f"{NAME} discovery {i}")
         for i, q in enumerate(response.parsed.discovery_questions)
     ]
     findings = []
     for i, f in enumerate(response.parsed.findings):
-        cleaned_text = ctx.voice.process_synthesizer_text(
-            f.text, context=f"{NAME} finding {i}"
-        )
+        cleaned_text = _voice(f.text, f"{NAME} finding {i}")
         findings.append(Finding(text=cleaned_text, source=f.source))
 
     return ObservedGtmMotionNarrative(
