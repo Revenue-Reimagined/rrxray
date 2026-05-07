@@ -1,0 +1,37 @@
+{% set t = data.collectors.tech_stack %}
+{% if t.detected_tools %}
+**Detected tooling ({{ t.detected_tools | length }}):**
+
+| Category | Tool | Confidence | Signature |
+|---|---|---|---|
+{% for tool in t.detected_tools %}
+| {{ tool.category }} | {{ tool.name }} | {{ tool.confidence }} | `{{ tool.signature_id }}` |
+{% endfor %}
+
+**Categories observed:** {{ t.categories_observed | join(", ") }}
+**Categories not detected:** {{ t.categories_absent | join(", ") }}
+{% else %}
+No analytics, marketing, or CRM tooling detected on the homepage.
+{% endif %}
+
+{% if t.findings %}
+**Findings:**
+
+{% for f in t.findings %}
+- {{ f.text | voice_collector }} *(source: [{{ f.source.url }}]({{ f.source.url }}))*
+{% endfor %}
+{% endif %}
+
+{% if t.gaps %}
+**Gaps:**
+{% for g in t.gaps %}
+→ {{ g | voice_collector }}
+{% endfor %}
+{% endif %}
+
+{% if t.discovery_questions %}
+**Discovery questions:**
+{% for q in t.discovery_questions %}
+- {{ q }}
+{% endfor %}
+{% endif %}

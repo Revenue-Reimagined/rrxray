@@ -52,6 +52,12 @@
 [Pricing module not available for this domain]
 {% endif %}
 
+{% if data.collectors.tech_stack %}
+### Tech Stack
+
+{% include "_tech_stack_detail.md.jinja" %}
+{% endif %}
+
 ---
 
 ## 6. Discovery Questions

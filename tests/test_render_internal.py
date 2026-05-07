@@ -180,3 +180,84 @@ def test_render_raises_if_anonymizer_misses_a_registered_name(monkeypatch):
 
     with pytest.raises(AnonymityViolationError):
         render_internal(data, a, VoicePostProcessor())
+
+
+def test_tech_stack_module_detail_renders_with_detections():
+    """When tech_stack has detected_tools, the Tech Stack subsection renders the table."""
+    from rrxray.schemas.tech_stack import DetectedTool, TechStackData
+
+    tech = TechStackData(
+        detected_tools=[
+            DetectedTool(
+                name="HubSpot", category="marketing_automation", confidence="high",
+                signature_id="hubspot:strict_js", matched_text="js.hs-scripts.com/x.js",
+            ),
+            DetectedTool(
+                name="Pendo", category="product_analytics", confidence="high",
+                signature_id="pendo:strict_agent", matched_text="cdn.pendo.io",
+            ),
+        ],
+        categories_observed=["marketing_automation", "product_analytics"],
+        categories_absent=["analytics", "tag_manager", "chat", "crm", "cdp", "ab_testing", "attribution"],
+    )
+    data = make_data()
+    data.collectors.tech_stack = tech
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "### Tech Stack" in out
+    assert "HubSpot" in out
+    assert "Pendo" in out
+    assert "marketing_automation" in out
+
+
+def test_tech_stack_module_detail_omits_when_no_collector():
+    """When tech_stack collector did not run, the Tech Stack subsection is absent."""
+    data = make_data()
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "### Tech Stack" not in out
+
+
+def test_tech_stack_module_detail_renders_categories_lists():
+    """categories_observed and categories_absent show up in render."""
+    from rrxray.schemas.tech_stack import DetectedTool, TechStackData
+
+    tech = TechStackData(
+        detected_tools=[DetectedTool(
+            name="HubSpot", category="marketing_automation", confidence="high",
+            signature_id="hubspot:strict_js", matched_text="x",
+        )],
+        categories_observed=["marketing_automation"],
+        categories_absent=["analytics", "crm"],
+    )
+    data = make_data()
+    data.collectors.tech_stack = tech
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "marketing_automation" in out
+    assert "analytics" in out  # in absent list
+    assert "crm" in out  # in absent list
+
+
+def test_tech_stack_renders_findings_with_voice_collector_filter():
+    """Findings text passes through voice_collector filter."""
+    from rrxray.schemas._shared import Finding, SourceCitation
+    from rrxray.schemas.tech_stack import DetectedTool, TechStackData
+
+    tech = TechStackData(
+        detected_tools=[DetectedTool(
+            name="HubSpot", category="marketing_automation", confidence="high",
+            signature_id="hubspot:strict_js", matched_text="x",
+        )],
+        findings=[Finding(
+            text="We leverage marketing automation for nurture.",  # forbidden word
+            source=SourceCitation(
+                url="https://example.com",
+                timestamp=datetime(2026, 5, 7, 12, 0, tzinfo=UTC),
+            ),
+        )],
+    )
+    data = make_data()
+    data.collectors.tech_stack = tech
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    # Voice substitution: "leverage" becomes "use" in the body before Voice Adjustments
+    body = out.split("### Voice Adjustments")[0]
+    assert "leverage" not in body
+    assert "use marketing automation" in body or "use" in body
