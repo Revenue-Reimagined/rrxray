@@ -9,18 +9,26 @@ import pytest
 from rrxray.context import SynthesizerContext
 from rrxray.schemas.data import CollectorOutputs
 from rrxray.schemas.pricing_packaging import PricingPackagingData, PricingTier
+from rrxray.schemas.tech_stack import DetectedTool, TechStackData
 from rrxray.synthesizers import observed_gtm_motion
 from rrxray.voice.anonymizer import Anonymizer
 from rrxray.voice.rr_voice import VoicePostProcessor
 
 
-def make_synth_ctx(pricing_data: PricingPackagingData | None, anthropic_response):
+def make_synth_ctx(
+    pricing_data: PricingPackagingData | None = None,
+    anthropic_response=None,
+    tech_stack: TechStackData | None = None,
+):
     fake_anthropic = MagicMock()
     fake_anthropic.complete_with_cached_system = AsyncMock(return_value=anthropic_response)
 
     config = MagicMock(domain="example.com", model="claude-sonnet-4-6")
     return SynthesizerContext(
-        collector_outputs=CollectorOutputs(pricing_packaging=pricing_data),
+        collector_outputs=CollectorOutputs(
+            pricing_packaging=pricing_data,
+            tech_stack=tech_stack,
+        ),
         anthropic=fake_anthropic,
         voice=VoicePostProcessor(),
         anonymizer=Anonymizer(),
@@ -214,3 +222,99 @@ def test_synth_voice_processes_gaps_field():
     ))
     with pytest.raises(VoiceViolationError):
         asyncio.run(observed_gtm_motion.synthesize(ctx))
+
+
+def test_synth_runs_with_tech_stack_only():
+    """When pricing is None but tech_stack has data, synthesis runs and uses tech_stack."""
+    tech = TechStackData(
+        detected_tools=[DetectedTool(
+            name="HubSpot", category="marketing_automation", confidence="high",
+            signature_id="hubspot:strict_js", matched_text="js.hs-scripts.com/x.js",
+        )],
+        categories_observed=["marketing_automation"],
+        categories_absent=["analytics", "tag_manager", "chat", "product_analytics",
+                           "crm", "cdp", "ab_testing", "attribution"],
+    )
+    ctx = make_synth_ctx(
+        pricing_data=None,
+        tech_stack=tech,
+        anthropic_response=make_anthropic_response(
+            ["Tech-stack-only narrative."],
+            ["No pricing data observed; relying on tech-stack signals."],
+        ),
+    )
+    result = asyncio.run(observed_gtm_motion.synthesize(ctx))
+    assert result is not None
+
+    # Verify Anthropic was called with a user message containing tech_stack data
+    ctx.anthropic.complete_with_cached_system.assert_called_once()
+    user_msg = ctx.anthropic.complete_with_cached_system.call_args.kwargs["user_message"]
+    assert "Tech Stack signal" in user_msg
+    assert "HubSpot" in user_msg
+    # Pricing block should fall back to "not collected"
+    assert "Pricing & Packaging signal" in user_msg
+    assert "not collected" in user_msg
+
+
+def test_synth_runs_with_both_collectors():
+    """When both collectors have data, the user message contains both signal blocks."""
+    pricing = PricingPackagingData(
+        has_public_pricing=True, is_contact_us_gated=False,
+        current_pricing_url="https://example.com/pricing",
+        current_tiers=[PricingTier(name="Pro", price="$50", cadence="month")],
+    )
+    tech = TechStackData(
+        detected_tools=[DetectedTool(
+            name="HubSpot", category="marketing_automation", confidence="high",
+            signature_id="hubspot:strict_js", matched_text="js.hs-scripts.com/x.js",
+        )],
+        categories_observed=["marketing_automation"],
+        categories_absent=["analytics", "tag_manager", "chat", "product_analytics",
+                           "crm", "cdp", "ab_testing", "attribution"],
+    )
+    ctx = make_synth_ctx(
+        pricing_data=pricing,
+        tech_stack=tech,
+        anthropic_response=make_anthropic_response(
+            ["Multi-signal narrative."],
+            ["Pricing public; HubSpot suggests marketing-led nurture."],
+        ),
+    )
+    result = asyncio.run(observed_gtm_motion.synthesize(ctx))
+    assert result is not None
+
+    user_msg = ctx.anthropic.complete_with_cached_system.call_args.kwargs["user_message"]
+    assert "Pricing & Packaging signal" in user_msg
+    assert "https://example.com/pricing" in user_msg
+    assert "Pro" in user_msg
+    assert "Tech Stack signal" in user_msg
+    assert "HubSpot" in user_msg
+
+
+def test_synth_returns_none_when_both_collectors_absent():
+    """When BOTH pricing and tech_stack are None, synthesis is skipped entirely (no Anthropic call)."""
+    ctx = make_synth_ctx(
+        pricing_data=None,
+        tech_stack=None,
+        anthropic_response=make_anthropic_response(["x"], ["y"]),
+    )
+    result = asyncio.run(observed_gtm_motion.synthesize(ctx))
+    assert result is None
+    ctx.anthropic.complete_with_cached_system.assert_not_called()
+
+
+def test_user_message_renders_conditional_blocks():
+    """Pricing-only path: user message has the pricing block populated; tech_stack falls back to 'not collected'."""
+    pricing = PricingPackagingData(
+        has_public_pricing=True, is_contact_us_gated=False,
+        current_pricing_url="https://example.com/pricing",
+    )
+    user_msg = observed_gtm_motion._render_user_message(
+        domain="example.com",
+        pricing=pricing,
+        tech_stack=None,
+    )
+    assert "Pricing & Packaging signal" in user_msg
+    assert "https://example.com/pricing" in user_msg
+    assert "Tech Stack signal" in user_msg
+    assert "not collected" in user_msg  # the tech_stack absence fallback fires
