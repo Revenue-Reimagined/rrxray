@@ -12,7 +12,14 @@ This is non-negotiable. Cannot be skipped under any circumstances.
 
 1. **A phase milestone completes** (e.g., Phase 1 foundation, Phase 2.1a tech_stack collector, Phase 2.1b Section A synthesizer upgrade). The phase is not "done" until the checkpoint is written and committed.
 2. **Before merging a feature branch into `main`**. The checkpoint is the handoff document for whoever reads the merged work.
-3. **Approaching context-window limits**. If you sense that a session is running low on tokens, write a partial-progress checkpoint immediately. Do not wait for the next user message. The checkpoint must include in-flight work so the next session can pick up.
+3. **Any session-continuity risk.** If there's any chance the current session may end before the next natural milestone, write a partial-progress checkpoint immediately. Do not wait for the next user message. The checkpoint must include in-flight work, the current task, what was just attempted, and what the next session should pick up. Triggers include but are not limited to:
+   - **Context-window pressure** — the conversation is approaching the model's context limit
+   - **5-hour session rate limit** — Claude's per-session token budget is depleting
+   - **Weekly usage cap** — approaching the user's plan-level weekly quota
+   - **User flags it** — if the user mentions they're worried about running out of tokens, hours, or weekly capacity, treat that as a hard trigger and checkpoint right away
+   - **Long-running execution sessions** — if you're dispatching many subagents in a row (Phase-style execution), checkpoint at sub-phase boundaries even if the full phase isn't done
+
+   When in doubt, checkpoint. A partial-progress checkpoint that captures in-flight work is far cheaper than losing context on hand-off.
 
 The format is fixed: use `docs/checkpoints/TEMPLATE.md` as the structure. Read at least one prior checkpoint before writing a new one.
 
