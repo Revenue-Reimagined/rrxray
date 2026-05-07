@@ -45,6 +45,7 @@ class CollectorOutputs(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
     pricing_packaging: "PricingPackagingData | None" = None  # forward ref
     tech_stack: "TechStackData | None" = None  # forward ref
+    revenue_motion: "RevenueMotionData | None" = None  # forward ref
 
 
 class ObservedGtmMotionNarrative(BaseModel):
@@ -77,6 +78,7 @@ class XrayData(BaseModel):
 
 # Resolve forward references
 from rrxray.schemas.pricing_packaging import PricingPackagingData  # noqa: E402
+from rrxray.schemas.revenue_motion import RevenueMotionData  # noqa: E402
 from rrxray.schemas.tech_stack import TechStackData  # noqa: E402
 
 CollectorOutputs.model_rebuild()

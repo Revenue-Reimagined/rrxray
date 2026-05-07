@@ -112,3 +112,50 @@ def test_collector_outputs_tech_stack_round_trips():
     restored = CollectorOutputs.model_validate(json.loads(serialized))
     assert restored.tech_stack is not None
     assert restored.tech_stack.detected_tools[0].name == "HubSpot"
+
+
+def test_collector_outputs_has_revenue_motion_field():
+    """CollectorOutputs must accept a revenue_motion field."""
+    from rrxray.schemas.data import CollectorOutputs
+    from rrxray.schemas.revenue_motion import RevenueMotionData
+
+    co = CollectorOutputs(revenue_motion=RevenueMotionData())
+    assert co.revenue_motion is not None
+
+
+def test_collector_outputs_revenue_motion_defaults_none():
+    from rrxray.schemas.data import CollectorOutputs
+    co = CollectorOutputs()
+    assert co.revenue_motion is None
+
+
+def test_collector_outputs_all_three_collectors_round_trip():
+    import json
+
+    from rrxray.schemas.data import CollectorOutputs
+    from rrxray.schemas.pricing_packaging import PricingPackagingData
+    from rrxray.schemas.revenue_motion import JobPosting, RevenueMotionData
+    from rrxray.schemas.tech_stack import DetectedTool, TechStackData
+
+    co = CollectorOutputs(
+        pricing_packaging=PricingPackagingData(
+            has_public_pricing=True, is_contact_us_gated=False,
+            current_pricing_url="https://example.com/pricing",
+        ),
+        tech_stack=TechStackData(
+            detected_tools=[DetectedTool(
+                name="HubSpot", category="marketing_automation", confidence="high",
+                signature_id="hubspot:strict_js", matched_text="x",
+            )],
+        ),
+        revenue_motion=RevenueMotionData(
+            careers_page_url="https://example.com/careers",
+            open_roles=[JobPosting(title="AE", category="ae", source="company_careers")],
+        ),
+    )
+    serialized = co.model_dump_json()
+    restored = CollectorOutputs.model_validate(json.loads(serialized))
+    assert restored.pricing_packaging is not None
+    assert restored.tech_stack is not None
+    assert restored.revenue_motion is not None
+    assert restored.revenue_motion.open_roles[0].title == "AE"
