@@ -234,3 +234,63 @@ def test_cancellation_propagates(tmp_path, monkeypatch):
 
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(main())
+
+
+def test_tech_stack_collector_registered_in_pipeline():
+    """tech_stack module must be in COLLECTORS so the orchestrator runs it."""
+    from rrxray import pipeline
+    from rrxray.collectors import tech_stack
+
+    assert tech_stack in pipeline.COLLECTORS
+
+
+def test_pipeline_includes_tech_stack_in_data_json(tmp_path, monkeypatch):
+    """End-to-end: a tech_stack stub returns TechStackData; pipeline puts it on CollectorOutputs."""
+    from rrxray import pipeline
+    from rrxray.schemas.tech_stack import DetectedTool, TechStackData
+
+    config = fake_config(tmp_path)
+
+    fake_pricing = MagicMock()
+    fake_pricing.NAME = "pricing_packaging"
+
+    async def pricing_collect(ctx):
+        from rrxray.schemas.pricing_packaging import PricingPackagingData
+        return PricingPackagingData(
+            has_public_pricing=True, is_contact_us_gated=False,
+            current_pricing_url="https://example.com/pricing",
+        )
+
+    fake_pricing.collect = pricing_collect
+
+    fake_tech_stack = MagicMock()
+    fake_tech_stack.NAME = "tech_stack"
+
+    async def tech_collect(ctx):
+        return TechStackData(
+            detected_tools=[DetectedTool(
+                name="HubSpot", category="marketing_automation", confidence="high",
+                signature_id="hubspot:strict_js", matched_text="x",
+            )],
+            categories_observed=["marketing_automation"],
+        )
+
+    fake_tech_stack.collect = tech_collect
+
+    fake_synth = MagicMock()
+    fake_synth.NAME = "observed_gtm_motion"
+    fake_synth.synthesize = AsyncMock(return_value=None)
+
+    monkeypatch.setattr(pipeline, "COLLECTORS", [fake_pricing, fake_tech_stack])
+    monkeypatch.setattr(pipeline, "SYNTHESIZERS", [fake_synth])
+    monkeypatch.setattr(pipeline, "build_collector_context", lambda c: MagicMock())
+    monkeypatch.setattr(
+        pipeline, "build_synthesizer_context",
+        lambda c, o, v, a: MagicMock(collector_outputs=o, voice=v, anonymizer=a, config=c),
+    )
+
+    data, markdown = asyncio.run(pipeline.run_pipeline(config))
+    assert data.collectors.tech_stack is not None
+    assert data.collectors.tech_stack.detected_tools[0].name == "HubSpot"
+    assert "### Tech Stack" in markdown
+    assert "HubSpot" in markdown

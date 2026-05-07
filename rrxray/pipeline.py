@@ -8,7 +8,7 @@ import traceback as tb_module
 from datetime import UTC, datetime
 from importlib.metadata import version
 
-from rrxray.collectors import pricing_packaging
+from rrxray.collectors import pricing_packaging, tech_stack
 from rrxray.context import CollectorContext, SynthesizerContext
 from rrxray.rendering.markdown import render_internal
 from rrxray.schemas.data import (
@@ -31,7 +31,7 @@ from rrxray.voice.rr_voice import VoicePostProcessor
 log = logging.getLogger("rrxray.pipeline")
 
 # Phase 2 will append to these lists.
-COLLECTORS = [pricing_packaging]
+COLLECTORS = [pricing_packaging, tech_stack]
 SYNTHESIZERS = [observed_gtm_motion_pricing]
 
 
