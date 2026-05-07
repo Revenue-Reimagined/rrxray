@@ -44,6 +44,7 @@ class CollectorOutputs(BaseModel):
     """One field per collector. None = not run or failed gracefully."""
     model_config = ConfigDict(validate_assignment=True)
     pricing_packaging: "PricingPackagingData | None" = None  # forward ref
+    tech_stack: "TechStackData | None" = None  # forward ref
 
 
 class ObservedGtmMotionNarrative(BaseModel):
@@ -74,7 +75,8 @@ class XrayData(BaseModel):
     failures: list[ModuleFailure] = []
 
 
-# Resolve forward reference
+# Resolve forward references
 from rrxray.schemas.pricing_packaging import PricingPackagingData  # noqa: E402
+from rrxray.schemas.tech_stack import TechStackData  # noqa: E402
 
 CollectorOutputs.model_rebuild()

@@ -79,3 +79,36 @@ def test_voice_event_action_constrained():
     assert e.action == "substitute"
     with pytest.raises(ValidationError):
         VoiceEvent(rule="x", original="y", replacement=None, context="z", action="bogus")  # type: ignore[arg-type]
+
+
+def test_collector_outputs_has_tech_stack_field():
+    """CollectorOutputs must accept a tech_stack field."""
+    from rrxray.schemas.data import CollectorOutputs
+    from rrxray.schemas.tech_stack import TechStackData
+
+    co = CollectorOutputs(tech_stack=TechStackData())
+    assert co.tech_stack is not None
+    assert isinstance(co.tech_stack, TechStackData)
+
+
+def test_collector_outputs_tech_stack_defaults_none():
+    from rrxray.schemas.data import CollectorOutputs
+
+    co = CollectorOutputs()
+    assert co.tech_stack is None
+
+
+def test_collector_outputs_tech_stack_round_trips():
+    from rrxray.schemas.data import CollectorOutputs
+    from rrxray.schemas.tech_stack import DetectedTool, TechStackData
+
+    co = CollectorOutputs(tech_stack=TechStackData(
+        detected_tools=[DetectedTool(
+            name="HubSpot", category="marketing_automation", confidence="high",
+            signature_id="hubspot:strict_js", matched_text="x",
+        )],
+    ))
+    serialized = co.model_dump_json()
+    restored = CollectorOutputs.model_validate(json.loads(serialized))
+    assert restored.tech_stack is not None
+    assert restored.tech_stack.detected_tools[0].name == "HubSpot"
