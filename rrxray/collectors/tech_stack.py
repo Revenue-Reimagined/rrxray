@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime
 
-from rrxray.collectors._tech_stack_catalog import SIGNATURES
+from rrxray.collectors._tech_stack_catalog import CATEGORIES, SIGNATURES
+from rrxray.schemas._shared import Finding, SourceCitation
 from rrxray.schemas.tech_stack import DetectedTool
 
 NAME = "tech_stack"
@@ -54,3 +56,74 @@ def _detect(html: str) -> list[DetectedTool]:
             matched_text=m.group(0)[:100],
         )
     return sorted(matches.values(), key=lambda t: (t.category, t.name))
+
+
+def _emit_findings(
+    detected: list[DetectedTool],
+    domain: str,
+    scrape_url: str,
+    now: datetime,
+) -> tuple[list[Finding], list[str], list[str]]:
+    """Rule-based findings/gaps/questions. No LLM."""
+    findings: list[Finding] = []
+    gaps: list[str] = []
+    questions: list[str] = []
+
+    if not detected:
+        findings.append(Finding(
+            text="No analytics, marketing, or CRM tags detected on the homepage.",
+            source=SourceCitation(url=scrape_url, timestamp=now),
+        ))
+        questions.append(
+            "We did not detect any common marketing or analytics tooling on your homepage. "
+            "Is that a deliberate posture (e.g., privacy-led), or are tags loaded server-side "
+            "or via a tag manager we did not match?"
+        )
+        return findings, gaps, questions
+
+    categories = {t.category for t in detected}
+    absent = [c for c in CATEGORIES if c not in categories]
+
+    has_marketing = "marketing_automation" in categories
+    has_crm = "crm" in categories
+    has_product_analytics = "product_analytics" in categories
+    has_chat = "chat" in categories
+
+    if has_marketing and not has_crm:
+        findings.append(Finding(
+            text=(
+                "Marketing automation present; no CRM signature detected on the homepage. "
+                "CRM may be detected via other surfaces."
+            ),
+            source=SourceCitation(url=scrape_url, timestamp=now),
+        ))
+
+    if has_product_analytics:
+        questions.append(
+            "Product analytics tooling indicates an in-product activation focus. "
+            "What are your activation and time-to-value benchmarks today?"
+        )
+
+    if has_chat and not has_marketing:
+        gaps.append(
+            "Live chat tooling is present but no marketing automation was detected. "
+            "Inbound conversations may not be feeding a nurture sequence."
+        )
+
+    if "analytics" in absent and "tag_manager" in absent:
+        gaps.append(
+            "Neither web analytics nor a tag manager was detected. "
+            "Site engagement data may be sparse."
+        )
+    if "marketing_automation" in absent and detected:
+        gaps.append(
+            "No marketing automation tooling was detected; "
+            "lead nurture may rely on manual outreach."
+        )
+    if "product_analytics" in absent and detected:
+        gaps.append(
+            "No product analytics was detected; activation and feature adoption "
+            "signals are likely informal."
+        )
+
+    return findings, gaps, questions
