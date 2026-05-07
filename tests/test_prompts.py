@@ -17,7 +17,7 @@ def test_synthesizer_system_prompt_forbidden_words_listed():
         assert word in text.lower()
 
 
-def test_observed_gtm_motion_pricing_template_exists():
-    text = files("rrxray.prompts").joinpath("observed_gtm_motion_pricing.md").read_text()
+def test_observed_gtm_motion_template_exists():
+    text = files("rrxray.prompts").joinpath("observed_gtm_motion.md").read_text()
     assert "{{" in text  # Jinja template
     assert "pricing" in text.lower()

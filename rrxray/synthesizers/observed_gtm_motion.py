@@ -39,7 +39,7 @@ def _load_system_prompt() -> str:
 
 def _render_user_message(domain: str, pricing_data) -> str:
     template_text = (
-        files("rrxray.prompts").joinpath("observed_gtm_motion_pricing.md").read_text()
+        files("rrxray.prompts").joinpath("observed_gtm_motion.md").read_text()
     )
     env = Environment(trim_blocks=True, lstrip_blocks=True)
     return env.from_string(template_text).render(domain=domain, data=pricing_data)

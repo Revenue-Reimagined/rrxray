@@ -9,7 +9,7 @@ import pytest
 from rrxray.context import SynthesizerContext
 from rrxray.schemas.data import CollectorOutputs
 from rrxray.schemas.pricing_packaging import PricingPackagingData, PricingTier
-from rrxray.synthesizers import observed_gtm_motion_pricing
+from rrxray.synthesizers import observed_gtm_motion
 from rrxray.voice.anonymizer import Anonymizer
 from rrxray.voice.rr_voice import VoicePostProcessor
 
@@ -30,7 +30,7 @@ def make_synth_ctx(pricing_data: PricingPackagingData | None, anthropic_response
 
 def make_anthropic_response(paragraphs, bullets, findings=None, gaps=None, questions=None):
     from rrxray.services.anthropic_client import AnthropicResponse
-    from rrxray.synthesizers.observed_gtm_motion_pricing import NarrativeResponse
+    from rrxray.synthesizers.observed_gtm_motion import NarrativeResponse
 
     parsed = NarrativeResponse(
         narrative_paragraphs=paragraphs,
@@ -51,12 +51,12 @@ def make_anthropic_response(paragraphs, bullets, findings=None, gaps=None, quest
 
 
 def test_synth_name_constant():
-    assert observed_gtm_motion_pricing.NAME == "observed_gtm_motion"
+    assert observed_gtm_motion.NAME == "observed_gtm_motion"
 
 
 def test_synth_returns_none_when_pricing_data_missing():
     ctx = make_synth_ctx(None, make_anthropic_response(["x"], ["y"]))
-    result = asyncio.run(observed_gtm_motion_pricing.synthesize(ctx))
+    result = asyncio.run(observed_gtm_motion.synthesize(ctx))
     assert result is None
 
 
@@ -74,7 +74,7 @@ def test_synth_calls_anthropic_with_cached_system():
             ["Pricing is published but unchanged for 18 months"],
         ),
     )
-    asyncio.run(observed_gtm_motion_pricing.synthesize(ctx))
+    asyncio.run(observed_gtm_motion.synthesize(ctx))
     ctx.anthropic.complete_with_cached_system.assert_called_once()
     kwargs = ctx.anthropic.complete_with_cached_system.call_args.kwargs
     assert "Verbatim Quarantine" in kwargs["system_prompt"]
@@ -96,7 +96,7 @@ def test_synth_runs_voice_post_processor_on_paragraphs():
             ["clean bullet"],
         ),
     )
-    result = asyncio.run(observed_gtm_motion_pricing.synthesize(ctx))
+    result = asyncio.run(observed_gtm_motion.synthesize(ctx))
     assert result is not None
     assert result.narrative_paragraphs == ["This is fine."]
 
@@ -117,7 +117,7 @@ def test_synth_raises_when_anthropic_returns_voice_violation():
         ),
     )
     with pytest.raises(VoiceViolationError):
-        asyncio.run(observed_gtm_motion_pricing.synthesize(ctx))
+        asyncio.run(observed_gtm_motion.synthesize(ctx))
 
 
 def test_synth_records_cache_hit():
@@ -127,7 +127,7 @@ def test_synth_records_cache_hit():
         current_pricing_url="https://example.com/pricing",
     )
     from rrxray.services.anthropic_client import AnthropicResponse
-    from rrxray.synthesizers.observed_gtm_motion_pricing import NarrativeResponse
+    from rrxray.synthesizers.observed_gtm_motion import NarrativeResponse
 
     parsed = NarrativeResponse(
         narrative_paragraphs=["x"],
@@ -146,7 +146,7 @@ def test_synth_records_cache_hit():
         model_used="claude-sonnet-4-6",
     )
     ctx = make_synth_ctx(pricing, response)
-    result = asyncio.run(observed_gtm_motion_pricing.synthesize(ctx))
+    result = asyncio.run(observed_gtm_motion.synthesize(ctx))
     assert result.cache_hit is True
 
 
@@ -161,7 +161,7 @@ def test_synth_voice_processes_gap_bullets():
         ["We leverage data here."],  # forbidden word in bullet
     ))
     with pytest.raises(VoiceViolationError):
-        asyncio.run(observed_gtm_motion_pricing.synthesize(ctx))
+        asyncio.run(observed_gtm_motion.synthesize(ctx))
 
 
 def test_synth_voice_processes_discovery_questions():
@@ -175,7 +175,7 @@ def test_synth_voice_processes_discovery_questions():
         questions=["What synergies exist between teams?"],  # forbidden word
     ))
     with pytest.raises(VoiceViolationError):
-        asyncio.run(observed_gtm_motion_pricing.synthesize(ctx))
+        asyncio.run(observed_gtm_motion.synthesize(ctx))
 
 
 def test_synth_voice_processes_finding_text():
@@ -199,7 +199,7 @@ def test_synth_voice_processes_finding_text():
         ["Clean."], ["clean bullet"], findings=[finding],
     ))
     with pytest.raises(VoiceViolationError):
-        asyncio.run(observed_gtm_motion_pricing.synthesize(ctx))
+        asyncio.run(observed_gtm_motion.synthesize(ctx))
 
 
 def test_synth_voice_processes_gaps_field():
@@ -213,4 +213,4 @@ def test_synth_voice_processes_gaps_field():
         gaps=["holistic approach to pricing"],  # forbidden word
     ))
     with pytest.raises(VoiceViolationError):
-        asyncio.run(observed_gtm_motion_pricing.synthesize(ctx))
+        asyncio.run(observed_gtm_motion.synthesize(ctx))

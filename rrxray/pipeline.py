@@ -24,7 +24,7 @@ from rrxray.services.anthropic_client import AnthropicClient
 from rrxray.services.cache import DiskCache
 from rrxray.services.firecrawl_client import FirecrawlClient
 from rrxray.services.wayback_client import WaybackClient
-from rrxray.synthesizers import observed_gtm_motion_pricing
+from rrxray.synthesizers import observed_gtm_motion
 from rrxray.voice.anonymizer import Anonymizer
 from rrxray.voice.rr_voice import VoicePostProcessor
 
@@ -32,7 +32,7 @@ log = logging.getLogger("rrxray.pipeline")
 
 # Phase 2 will append to these lists.
 COLLECTORS = [pricing_packaging, tech_stack]
-SYNTHESIZERS = [observed_gtm_motion_pricing]
+SYNTHESIZERS = [observed_gtm_motion]
 
 
 def build_collector_context(config) -> CollectorContext:
