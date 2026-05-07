@@ -43,3 +43,28 @@ def test_invalid_mode_rejected():
     from rrxray.config import Config
     with pytest.raises(ValidationError):
         Config(domain="example.com", mode="hook")  # Phase 3 mode; not yet valid
+
+
+def test_empty_env_var_falls_through_to_dotenv(monkeypatch, tmp_path):
+    """An empty ANTHROPIC_API_KEY in os.environ should NOT shadow the .env file value."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("ANTHROPIC_API_KEY=sk-ant-from-dotenv-file\n")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.chdir(tmp_path)
+
+    from rrxray.config import Config
+    c = Config(domain="example.com")
+    assert c.anthropic_api_key is not None
+    assert c.anthropic_api_key.get_secret_value() == "sk-ant-from-dotenv-file"
+
+
+def test_empty_env_var_with_no_dotenv_leaves_key_unset(monkeypatch, tmp_path):
+    """No .env, empty env var → field is None (not empty SecretStr)."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.chdir(tmp_path)
+
+    from rrxray.config import Config
+    c = Config(domain="example.com")
+    # Either None or absent; what matters is that empty SecretStr does not slip through
+    if c.anthropic_api_key is not None:
+        assert c.anthropic_api_key.get_secret_value() != ""

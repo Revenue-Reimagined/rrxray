@@ -7,10 +7,19 @@ from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings.sources import EnvSettingsSource
 
 
 def _today_yyyymmdd() -> str:
     return date.today().strftime("%Y%m%d")
+
+
+class _NonEmptyEnvSettingsSource(EnvSettingsSource):
+    """Filter empty-string env vars so they fall through to .env file values."""
+
+    def _load_env_vars(self):  # type: ignore[override]
+        env_vars = super()._load_env_vars()
+        return {k: v for k, v in env_vars.items() if v not in (None, "")}
 
 
 class Config(BaseSettings):
@@ -19,6 +28,22 @@ class Config(BaseSettings):
         extra="ignore",
         case_sensitive=False,
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        return (
+            init_settings,
+            _NonEmptyEnvSettingsSource(settings_cls),
+            dotenv_settings,
+            file_secret_settings,
+        )
 
     # API keys (loaded from bare env names)
     anthropic_api_key: SecretStr | None = Field(default=None, alias="ANTHROPIC_API_KEY")
