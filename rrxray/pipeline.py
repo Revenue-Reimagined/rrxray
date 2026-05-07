@@ -82,6 +82,8 @@ async def run_collectors(ctx: CollectorContext) -> tuple[CollectorOutputs, list[
     outputs = CollectorOutputs()
     failures: list[ModuleFailure] = []
     for (name, _), result in zip(coros, results, strict=True):
+        if isinstance(result, asyncio.CancelledError):
+            raise result
         if isinstance(result, BaseException):
             tb = "".join(tb_module.format_exception(type(result), result, result.__traceback__))
             failures.append(ModuleFailure(module=name, kind="collector", error=str(result), traceback=tb))
@@ -97,6 +99,8 @@ async def run_synthesizers(ctx: SynthesizerContext) -> tuple[SynthesizerOutputs,
     outputs = SynthesizerOutputs()
     failures: list[ModuleFailure] = []
     for (name, _), result in zip(coros, results, strict=True):
+        if isinstance(result, asyncio.CancelledError):
+            raise result
         if isinstance(result, BaseException):
             tb = "".join(tb_module.format_exception(type(result), result, result.__traceback__))
             failures.append(ModuleFailure(module=name, kind="synthesizer", error=str(result), traceback=tb))

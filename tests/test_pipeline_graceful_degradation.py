@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from rrxray import pipeline
 from rrxray.schemas.data import XrayData
 
@@ -165,3 +167,70 @@ def test_voice_log_includes_render_time_substitutions(tmp_path, monkeypatch):
     data, _markdown = asyncio.run(pipeline.run_pipeline(config))
     # Voice substitution from rendering Pro tier notes should be in voice_log
     assert any(e.rule == "forbidden_word" and e.original.lower() == "leverage" for e in data.voice_log)
+
+
+def test_synthesizer_failure_recorded_no_crash(tmp_path, monkeypatch):
+    """Synthesizer raising should produce a ModuleFailure row, not crash the pipeline."""
+    config = fake_config(tmp_path)
+
+    fake_pricing = MagicMock()
+    fake_pricing.NAME = "pricing_packaging"
+
+    async def fake_collect(ctx):
+        from rrxray.schemas.pricing_packaging import PricingPackagingData
+        return PricingPackagingData(
+            has_public_pricing=True, is_contact_us_gated=False,
+            current_pricing_url="https://example.com/pricing",
+        )
+
+    fake_pricing.collect = fake_collect
+
+    fake_synth = MagicMock()
+    fake_synth.NAME = "observed_gtm_motion"
+
+    async def boom(ctx):
+        raise RuntimeError("synthesizer exploded")
+
+    fake_synth.synthesize = boom
+
+    monkeypatch.setattr(pipeline, "COLLECTORS", [fake_pricing])
+    monkeypatch.setattr(pipeline, "SYNTHESIZERS", [fake_synth])
+    monkeypatch.setattr(pipeline, "build_collector_context", lambda c: MagicMock())
+    monkeypatch.setattr(pipeline, "build_synthesizer_context",
+                        lambda c, o, v, a: MagicMock(collector_outputs=o, voice=v, anonymizer=a, config=c))
+
+    data, _markdown = asyncio.run(pipeline.run_pipeline(config))
+    assert data.synthesizers.observed_gtm_motion is None
+    assert any(f.module == "observed_gtm_motion" and f.kind == "synthesizer" for f in data.failures)
+
+
+def test_cancellation_propagates(tmp_path, monkeypatch):
+    """Pipeline cancellation must propagate; CancelledError is not a ModuleFailure."""
+    config = fake_config(tmp_path)
+
+    fake_pricing = MagicMock()
+    fake_pricing.NAME = "pricing_packaging"
+
+    async def hang_then_cancel(ctx):
+        await asyncio.sleep(10)  # will be cancelled before this finishes
+
+    fake_pricing.collect = hang_then_cancel
+
+    fake_synth = MagicMock()
+    fake_synth.NAME = "observed_gtm_motion"
+    fake_synth.synthesize = AsyncMock(return_value=None)
+
+    monkeypatch.setattr(pipeline, "COLLECTORS", [fake_pricing])
+    monkeypatch.setattr(pipeline, "SYNTHESIZERS", [fake_synth])
+    monkeypatch.setattr(pipeline, "build_collector_context", lambda c: MagicMock())
+    monkeypatch.setattr(pipeline, "build_synthesizer_context",
+                        lambda c, o, v, a: MagicMock(collector_outputs=o, voice=v, anonymizer=a, config=c))
+
+    async def main():
+        task = asyncio.create_task(pipeline.run_pipeline(config))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        await task
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(main())

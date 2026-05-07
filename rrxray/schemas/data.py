@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # Re-export shared base types so existing importers (tests, etc.) keep working.
 from rrxray.schemas._shared import Finding, SourceCitation
@@ -42,6 +42,7 @@ class InputParams(BaseModel):
 
 class CollectorOutputs(BaseModel):
     """One field per collector. None = not run or failed gracefully."""
+    model_config = ConfigDict(validate_assignment=True)
     pricing_packaging: "PricingPackagingData | None" = None  # forward ref
 
 
@@ -56,6 +57,7 @@ class ObservedGtmMotionNarrative(BaseModel):
 
 
 class SynthesizerOutputs(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
     observed_gtm_motion: ObservedGtmMotionNarrative | None = None
 
 
