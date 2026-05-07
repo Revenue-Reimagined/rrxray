@@ -34,7 +34,33 @@ def _load_system_prompt() -> str:
     return files("rrxray.prompts").joinpath("synthesizer_system.md").read_text()
 
 
-def _render_user_message(domain: str, pricing, tech_stack) -> str:
+def _read_evidence_text(ctx: SynthesizerContext, relative_path: str, max_chars: int) -> str:
+    """Read raw text from evidence; truncate to max_chars; empty string on missing/error."""
+    try:
+        from pathlib import Path
+
+        evidence_dir = (
+            ctx.config.evidence_dir
+            if hasattr(ctx.config, "evidence_dir")
+            else Path("evidence")
+        )
+        full_path = evidence_dir / relative_path
+        if not full_path.exists():
+            return ""
+        text = full_path.read_text(encoding="utf-8", errors="ignore")
+        return text[:max_chars]
+    except Exception as e:
+        log.warning("Failed to read evidence at %s: %s", relative_path, e)
+        return ""
+
+
+def _render_user_message(
+    domain: str,
+    pricing,
+    tech_stack,
+    raw_pricing_text: str = "",
+    raw_homepage_text: str = "",
+) -> str:
     """Render the Section A user message.
 
     Both `pricing` and `tech_stack` are optional. The Jinja template renders
@@ -47,6 +73,8 @@ def _render_user_message(domain: str, pricing, tech_stack) -> str:
         domain=domain,
         pricing=pricing,
         tech_stack=tech_stack,
+        raw_pricing_text=raw_pricing_text,
+        raw_homepage_text=raw_homepage_text,
     )
 
 
@@ -62,8 +90,26 @@ async def synthesize(ctx: SynthesizerContext) -> ObservedGtmMotionNarrative | No
         )
         return None
 
+    # Read raw page excerpts from evidence (truncated to keep prompt size sane)
+    raw_pricing_text = (
+        _read_evidence_text(ctx, "pricing_packaging/current.md", max_chars=3000)
+        if pricing
+        else ""
+    )
+    raw_homepage_text = (
+        _read_evidence_text(ctx, "tech_stack/homepage.html", max_chars=3000)
+        if tech_stack
+        else ""
+    )
+
     system_prompt = _load_system_prompt()
-    user_message = _render_user_message(ctx.config.domain, pricing, tech_stack)
+    user_message = _render_user_message(
+        ctx.config.domain,
+        pricing,
+        tech_stack,
+        raw_pricing_text=raw_pricing_text,
+        raw_homepage_text=raw_homepage_text,
+    )
 
     response = await ctx.anthropic.complete_with_cached_system(
         system_prompt=system_prompt,

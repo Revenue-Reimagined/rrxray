@@ -318,3 +318,60 @@ def test_user_message_renders_conditional_blocks():
     assert "https://example.com/pricing" in user_msg
     assert "Tech Stack signal" in user_msg
     assert "not collected" in user_msg  # the tech_stack absence fallback fires
+
+
+def test_synth_reads_raw_page_text_into_prompt(tmp_path):
+    """Raw evidence text is read from evidence_dir and injected into the user message."""
+    import asyncio
+
+    # Pre-populate evidence files with sentinel text
+    pricing_dir = tmp_path / "pricing_packaging"
+    pricing_dir.mkdir(parents=True)
+    (pricing_dir / "current.md").write_text("SENTINEL_PRICING_RAW_TEXT", encoding="utf-8")
+
+    tech_dir = tmp_path / "tech_stack"
+    tech_dir.mkdir(parents=True)
+    (tech_dir / "homepage.html").write_text("SENTINEL_HOMEPAGE_RAW_TEXT", encoding="utf-8")
+
+    pricing = PricingPackagingData(
+        has_public_pricing=True,
+        is_contact_us_gated=False,
+        current_pricing_url="https://example.com/pricing",
+    )
+    tech = TechStackData(
+        detected_tools=[DetectedTool(
+            name="HubSpot", category="marketing_automation", confidence="high",
+            signature_id="hubspot:strict_js", matched_text="js.hs-scripts.com/x.js",
+        )],
+        categories_observed=["marketing_automation"],
+        categories_absent=["analytics"],
+    )
+
+    fake_anthropic = MagicMock()
+    fake_anthropic.complete_with_cached_system = AsyncMock(
+        return_value=make_anthropic_response(["paragraph"], ["bullet"])
+    )
+
+    config = MagicMock(domain="example.com", model="claude-sonnet-4-6")
+    config.evidence_dir = tmp_path
+
+    from rrxray.voice.anonymizer import Anonymizer
+    from rrxray.voice.rr_voice import VoicePostProcessor
+
+    ctx = SynthesizerContext(
+        collector_outputs=CollectorOutputs(
+            pricing_packaging=pricing,
+            tech_stack=tech,
+        ),
+        anthropic=fake_anthropic,
+        voice=VoicePostProcessor(),
+        anonymizer=Anonymizer(),
+        config=config,
+    )
+
+    asyncio.run(observed_gtm_motion.synthesize(ctx))
+
+    fake_anthropic.complete_with_cached_system.assert_called_once()
+    user_msg = fake_anthropic.complete_with_cached_system.call_args.kwargs["user_message"]
+    assert "SENTINEL_PRICING_RAW_TEXT" in user_msg
+    assert "SENTINEL_HOMEPAGE_RAW_TEXT" in user_msg
