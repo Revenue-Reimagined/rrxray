@@ -217,7 +217,7 @@ async def collect(ctx: CollectorContext) -> PricingPackagingData:
                 url=pricing_url,
                 timestamp=now,
                 evidence_path=str(
-                    (ctx.evidence_dir / NAME / "current.md").relative_to(ctx.evidence_dir.parent)
+                    (ctx.evidence_dir / NAME / "current.md").relative_to(ctx.evidence_dir)
                 ),
             ),
         ))
@@ -231,7 +231,7 @@ async def collect(ctx: CollectorContext) -> PricingPackagingData:
         url=pricing_url,
         timestamp=now,
         evidence_path=str(
-            (ctx.evidence_dir / NAME / "current.md").relative_to(ctx.evidence_dir.parent)
+            (ctx.evidence_dir / NAME / "current.md").relative_to(ctx.evidence_dir)
         ),
     )]
     for s in snapshots:
@@ -240,7 +240,7 @@ async def collect(ctx: CollectorContext) -> PricingPackagingData:
             timestamp=s.timestamp,
             evidence_path=str(
                 (ctx.evidence_dir / NAME / f"wayback_{s.timestamp.strftime('%Y%m%d')}.md").relative_to(
-                    ctx.evidence_dir.parent
+                    ctx.evidence_dir
                 )
             ),
         ))

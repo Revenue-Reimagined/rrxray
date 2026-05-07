@@ -275,6 +275,29 @@ def test_collect_handles_extraction_failure_gracefully(tmp_path):
     assert result.is_contact_us_gated is True
 
 
+def test_source_citation_paths_relative_to_evidence_dir(tmp_path):
+    """SourceCitation.evidence_path should be relative to evidence_dir, not evidence_dir.parent.
+
+    The renderer prepends 'evidence/' so paths must NOT include that prefix to avoid doubling.
+    """
+    md = "# Pricing\n## Pro\n$50/month"
+    ctx = make_ctx(tmp_path, scrape_responses={
+        "https://example.com/pricing": {
+            "markdown": md, "html": "",
+            "metadata": {"sourceURL": "https://example.com/pricing"},
+        },
+    })
+    result = asyncio.run(pricing_packaging.collect(ctx))
+    for source in result.sources:
+        if source.evidence_path:
+            assert not source.evidence_path.startswith("evidence/"), (
+                f"evidence_path should be relative to evidence_dir, got: {source.evidence_path!r}"
+            )
+            assert source.evidence_path.startswith("pricing_packaging/"), (
+                f"expected path to start with 'pricing_packaging/', got: {source.evidence_path!r}"
+            )
+
+
 def test_collect_cleans_up_stale_wayback_files(tmp_path):
     """Re-running the collector replaces wayback_*.md from a prior run."""
     md = "# Pricing\n## Pro\n$50/month"
