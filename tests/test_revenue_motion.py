@@ -126,3 +126,76 @@ def test_detect_ats_returns_none_when_no_ats_link():
     name, url = revenue_motion._detect_ats(html)
     assert name is None
     assert url is None
+
+
+def test_categorize_title_ae():
+    cat, kw = revenue_motion._categorize_title("Senior Account Executive")
+    assert cat == "ae"
+    assert "account executive" in kw.lower()
+
+
+def test_categorize_title_sdr():
+    cat, _ = revenue_motion._categorize_title("Sales Development Representative")
+    assert cat == "sdr"
+
+
+def test_categorize_title_bdr():
+    cat, _ = revenue_motion._categorize_title("BDR — Outbound")
+    assert cat == "sdr"
+
+
+def test_categorize_title_sales_leadership():
+    for title in ["VP of Sales", "Chief Revenue Officer", "Head of Revenue"]:
+        cat, _ = revenue_motion._categorize_title(title)
+        assert cat == "sales_leadership", f"{title} should be sales_leadership; got {cat}"
+
+
+def test_categorize_title_csm():
+    cat, _ = revenue_motion._categorize_title("Senior Customer Success Manager")
+    assert cat == "csm"
+
+
+def test_categorize_title_unknown_returns_other():
+    cat, kw = revenue_motion._categorize_title("Senior Software Engineer")
+    assert cat == "other"
+    assert kw is None
+
+
+def test_categorize_title_case_insensitive():
+    cat, _ = revenue_motion._categorize_title("ACCOUNT EXECUTIVE")
+    assert cat == "ae"
+
+
+def test_extract_roles_from_simple_careers_page():
+    html = _load("careers_simple.html")
+    roles = revenue_motion._extract_roles(html, source="company_careers", base_url="https://acme.com")
+    titles = [r.title for r in roles]
+    assert "Senior Account Executive" in titles
+    assert "Sales Development Representative" in titles
+    assert "Chief Technology Officer" in titles
+
+
+def test_extract_roles_categorizes_correctly():
+    html = _load("careers_simple.html")
+    roles = revenue_motion._extract_roles(html, source="company_careers", base_url="https://acme.com")
+    cat_map = {r.title: r.category for r in roles}
+    assert cat_map["Senior Account Executive"] == "ae"
+    assert cat_map["Sales Development Representative"] == "sdr"
+    assert cat_map["Chief Technology Officer"] == "other"
+
+
+def test_extract_roles_resolves_relative_urls():
+    html = _load("careers_simple.html")
+    roles = revenue_motion._extract_roles(html, source="company_careers", base_url="https://acme.com")
+    ae_role = next(r for r in roles if r.category == "ae")
+    assert ae_role.url is not None
+    assert ae_role.url.startswith("https://acme.com")
+
+
+def test_extract_roles_returns_empty_for_html_with_no_links():
+    roles = revenue_motion._extract_roles(
+        "<html><body><p>No jobs</p></body></html>",
+        source="company_careers",
+        base_url="https://acme.com",
+    )
+    assert roles == []
