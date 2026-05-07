@@ -1,6 +1,8 @@
 """tech_stack collector tests."""
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 from rrxray.collectors import tech_stack
 
@@ -151,3 +153,140 @@ def test_no_analytics_or_tag_manager_emits_gap():
     )
     gap_text = " ".join(gaps).lower()
     assert "analytics" in gap_text or "tag manager" in gap_text
+
+
+def _make_ctx(tmp_path, scrape_response=None, scrape_error=None):
+    """Build a CollectorContext with a mocked Firecrawl client."""
+    from rrxray.context import CollectorContext
+
+    fc = MagicMock()
+
+    if scrape_error is not None:
+        async def fake_scrape(url, only_main_content=True):
+            raise scrape_error
+        fc.scrape_url = AsyncMock(side_effect=fake_scrape)
+    else:
+        response = scrape_response or {
+            "url": "https://example.com",
+            "html": "",
+            "markdown": "",
+            "metadata": {},
+        }
+        fc.scrape_url = AsyncMock(return_value=MagicMock(**response))
+
+    wb = MagicMock()
+    config = MagicMock()
+    return CollectorContext(
+        domain="example.com",
+        company_name=None,
+        firecrawl=fc,
+        wayback=wb,
+        evidence_dir=tmp_path / "evidence",
+        config=config,
+    )
+
+
+def test_collector_name_constant():
+    assert tech_stack.NAME == "tech_stack"
+
+
+def test_collect_writes_evidence_files(tmp_path):
+    html = _load("multi_tool.html")
+    ctx = _make_ctx(tmp_path, scrape_response={
+        "url": "https://example.com",
+        "html": html,
+        "markdown": "",
+        "metadata": {"sourceURL": "https://example.com"},
+    })
+    asyncio.run(tech_stack.collect(ctx))
+    evidence = tmp_path / "evidence" / "tech_stack"
+    assert (evidence / "homepage.html").exists()
+    assert (evidence / "detections.json").exists()
+    saved_html = (evidence / "homepage.html").read_text()
+    assert saved_html == html
+
+
+def test_collect_only_main_content_false(tmp_path):
+    """Collector must request full HTML (not main-content-only) so <head> tags are visible."""
+    ctx = _make_ctx(tmp_path, scrape_response={
+        "url": "https://example.com",
+        "html": "<html></html>",
+        "markdown": "",
+        "metadata": {"sourceURL": "https://example.com"},
+    })
+    asyncio.run(tech_stack.collect(ctx))
+    _args, kwargs = ctx.firecrawl.scrape_url.call_args
+    assert kwargs.get("only_main_content") is False
+
+
+def test_collect_returns_techstackdata(tmp_path):
+    from rrxray.schemas.tech_stack import TechStackData
+
+    html = _load("multi_tool.html")
+    ctx = _make_ctx(tmp_path, scrape_response={
+        "url": "https://example.com",
+        "html": html,
+        "markdown": "",
+        "metadata": {"sourceURL": "https://example.com"},
+    })
+    result = asyncio.run(tech_stack.collect(ctx))
+    assert isinstance(result, TechStackData)
+    assert len(result.detected_tools) >= 4
+    names = {t.name for t in result.detected_tools}
+    assert "HubSpot" in names
+
+
+def test_collect_populates_categories_observed_and_absent(tmp_path):
+    html = _load("multi_tool.html")
+    ctx = _make_ctx(tmp_path, scrape_response={
+        "url": "https://example.com",
+        "html": html,
+        "markdown": "",
+        "metadata": {"sourceURL": "https://example.com"},
+    })
+    result = asyncio.run(tech_stack.collect(ctx))
+    assert "marketing_automation" in result.categories_observed
+    assert "product_analytics" in result.categories_observed
+    assert "marketing_automation" not in result.categories_absent
+    assert len(result.categories_observed) + len(result.categories_absent) == 9
+
+
+def test_source_citation_path_relative_to_evidence_dir(tmp_path):
+    """SourceCitation.evidence_path must NOT start with 'evidence/' to avoid template double-prefix."""
+    html = _load("multi_tool.html")
+    ctx = _make_ctx(tmp_path, scrape_response={
+        "url": "https://example.com",
+        "html": html,
+        "markdown": "",
+        "metadata": {"sourceURL": "https://example.com"},
+    })
+    result = asyncio.run(tech_stack.collect(ctx))
+    for source in result.sources:
+        if source.evidence_path:
+            assert not source.evidence_path.startswith("evidence/")
+            assert source.evidence_path.startswith("tech_stack/")
+
+
+def test_collect_handles_firecrawl_error_gracefully(tmp_path):
+    """A FirecrawlError must produce a graceful TechStackData with a single fetch-failure finding."""
+    from rrxray.services.firecrawl_client import FirecrawlError
+
+    ctx = _make_ctx(tmp_path, scrape_error=FirecrawlError("boom"))
+    result = asyncio.run(tech_stack.collect(ctx))
+    assert result.detected_tools == []
+    assert len(result.findings) == 1
+    assert "homepage" in result.findings[0].text.lower()
+
+
+def test_collect_no_detections_returns_findings_about_emptiness(tmp_path):
+    html = _load("empty.html")
+    ctx = _make_ctx(tmp_path, scrape_response={
+        "url": "https://example.com",
+        "html": html,
+        "markdown": "",
+        "metadata": {"sourceURL": "https://example.com"},
+    })
+    result = asyncio.run(tech_stack.collect(ctx))
+    assert result.detected_tools == []
+    assert len(result.findings) == 1
+    assert "no analytics" in result.findings[0].text.lower() or "no tags" in result.findings[0].text.lower()

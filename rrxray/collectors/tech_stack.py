@@ -127,3 +127,70 @@ def _emit_findings(
         )
 
     return findings, gaps, questions
+
+
+import json  # noqa: E402
+from datetime import UTC  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from rrxray.context import CollectorContext  # noqa: E402
+from rrxray.schemas.tech_stack import TechStackData  # noqa: E402
+from rrxray.services.firecrawl_client import FirecrawlError  # noqa: E402
+
+
+def _write_evidence(
+    evidence_dir: Path,
+    html: str,
+    detected: list[DetectedTool],
+) -> None:
+    """Write the raw scraped HTML and the parsed detection set to the evidence dir."""
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    (evidence_dir / "homepage.html").write_text(html, encoding="utf-8")
+    (evidence_dir / "detections.json").write_text(
+        json.dumps([t.model_dump() for t in detected], indent=2),
+        encoding="utf-8",
+    )
+
+
+async def collect(ctx: CollectorContext) -> TechStackData:
+    """Scrape the homepage; run all signatures; emit DetectedTool list and findings."""
+    now = datetime.now(UTC)
+    homepage_url = f"https://{ctx.domain}"
+
+    try:
+        page = await ctx.firecrawl.scrape_url(homepage_url, only_main_content=False)
+    except FirecrawlError as e:
+        log.warning("homepage scrape failed for %s: %s", homepage_url, e)
+        return TechStackData(
+            findings=[Finding(
+                text=f"Could not fetch homepage at {homepage_url} for tech stack detection: {e}",
+                source=SourceCitation(url=homepage_url, timestamp=now),
+            )],
+        )
+
+    html = page.html or ""
+    detected = _detect(html)
+    categories_observed = sorted({t.category for t in detected})
+    categories_absent = [c for c in CATEGORIES if c not in categories_observed]
+
+    findings, gaps, questions = _emit_findings(detected, ctx.domain, homepage_url, now)
+
+    _write_evidence(ctx.evidence_dir / NAME, html, detected)
+
+    sources = [SourceCitation(
+        url=homepage_url,
+        timestamp=now,
+        evidence_path=str(
+            (ctx.evidence_dir / NAME / "homepage.html").relative_to(ctx.evidence_dir)
+        ),
+    )]
+
+    return TechStackData(
+        detected_tools=detected,
+        categories_observed=categories_observed,
+        categories_absent=categories_absent,
+        findings=findings,
+        gaps=gaps,
+        discovery_questions=questions,
+        sources=sources,
+    )
