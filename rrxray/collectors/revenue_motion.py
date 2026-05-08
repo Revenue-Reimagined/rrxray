@@ -1,15 +1,17 @@
 """revenue_motion collector: careers page + LinkedIn job + employee count signals."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin
 
 from rrxray.collectors._revenue_motion_catalog import ATS_PATTERNS, ROLE_KEYWORDS
 from rrxray.schemas._shared import Finding, SourceCitation
-from rrxray.schemas.revenue_motion import JobPosting
+from rrxray.schemas.revenue_motion import JobPosting, RevenueMotionData
 
 if TYPE_CHECKING:
     from rrxray.context import CollectorContext
@@ -29,7 +31,7 @@ async def _discover_careers_url(ctx: CollectorContext):
         try:
             page = await ctx.firecrawl.scrape_url(url, only_main_content=False)
             html = page.html or ""
-            if html.strip() and len(html) > 200:
+            if html.strip() and len(html) > 50:
                 return url, page
         except FirecrawlError as e:
             log.debug("careers discover: %s not reachable: %s", url, e)
@@ -209,7 +211,7 @@ def _emit_findings(
             "Are you actively hiring, and if so, where do you currently post roles? "
             "(Internal referral, executive recruiter, ATS-only, etc.)"
         )
-        return findings, gaps, questions
+        return findings, gaps, questions  # early return - no roles
 
     ae = counts.get("ae", 0)
     sdr = counts.get("sdr", 0)
@@ -311,3 +313,123 @@ def _emit_findings(
         ))
 
     return findings, gaps, questions
+
+
+def _write_evidence(
+    evidence_dir: Path,
+    careers_html: str,
+    ats_html: str | None,
+    linkedin_jobs: list,
+    linkedin_employee_count: int | None,
+) -> None:
+    """Write raw HTML + LinkedIn search results to evidence dir."""
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    for stale in evidence_dir.glob("*.html"):
+        stale.unlink()
+    for stale in evidence_dir.glob("*.json"):
+        stale.unlink()
+
+    if careers_html:
+        (evidence_dir / "careers.html").write_text(careers_html, encoding="utf-8")
+    if ats_html:
+        (evidence_dir / "ats.html").write_text(ats_html, encoding="utf-8")
+    (evidence_dir / "linkedin_jobs.json").write_text(
+        json.dumps([j.model_dump() for j in linkedin_jobs], indent=2),
+        encoding="utf-8",
+    )
+    (evidence_dir / "linkedin_employee_count.json").write_text(
+        json.dumps({"count": linkedin_employee_count}, indent=2),
+        encoding="utf-8",
+    )
+
+
+async def collect(ctx) -> RevenueMotionData:
+    """Discover careers page, scrape it (and ATS if linked), search LinkedIn, emit findings."""
+    from rrxray.services.firecrawl_client import FirecrawlError
+
+    now = datetime.now(UTC)
+
+    # Discover careers page
+    careers_url, careers_page = await _discover_careers_url(ctx)
+    careers_html = (careers_page.html if careers_page else "") or ""
+
+    # Detect ATS link in careers page HTML
+    ats_platform: str | None = None
+    ats_url: str | None = None
+    ats_html: str | None = None
+    if careers_html:
+        ats_platform, ats_url = _detect_ats(careers_html)
+        if ats_url and not ats_url.startswith("http"):
+            ats_url = "https://" + ats_url
+        if ats_url:
+            try:
+                ats_page = await ctx.firecrawl.scrape_url(ats_url, only_main_content=False)
+                ats_html = ats_page.html or ""
+            except FirecrawlError as e:
+                log.warning("ATS scrape failed for %s: %s", ats_url, e)
+                ats_html = None
+
+    # Extract roles from careers page + ATS page
+    base_url = f"https://{ctx.domain}"
+    careers_roles = _extract_roles(careers_html, source="company_careers", base_url=base_url)
+    ats_roles = _extract_roles(ats_html or "", source="ats", base_url=ats_url or base_url)
+    company_roles = careers_roles + ats_roles
+
+    # Search LinkedIn
+    linkedin_roles = await _linkedin_search_jobs(ctx.firecrawl, ctx.domain)
+    linkedin_employee_count = await _linkedin_employee_count(ctx.firecrawl, ctx.domain)
+
+    # Combine all roles for metrics
+    all_roles = company_roles + linkedin_roles
+    role_counts, ratio = _compute_role_metrics(all_roles)
+
+    # Findings
+    findings, gaps, questions = _emit_findings(
+        domain=ctx.domain,
+        careers_url=careers_url,
+        roles=all_roles,
+        counts=role_counts,
+        ratio=ratio,
+        employee_count=linkedin_employee_count,
+        ats_platform=ats_platform,
+    )
+
+    # Evidence
+    _write_evidence(
+        ctx.evidence_dir / NAME,
+        careers_html,
+        ats_html,
+        linkedin_roles,
+        linkedin_employee_count,
+    )
+
+    # Source citations
+    sources = []
+    if careers_url:
+        sources.append(SourceCitation(
+            url=careers_url, timestamp=now,
+            evidence_path=str(
+                (ctx.evidence_dir / NAME / "careers.html").relative_to(ctx.evidence_dir)
+            ),
+        ))
+    if ats_url:
+        sources.append(SourceCitation(
+            url=ats_url, timestamp=now,
+            evidence_path=str(
+                (ctx.evidence_dir / NAME / "ats.html").relative_to(ctx.evidence_dir)
+            ) if ats_html else None,
+        ))
+
+    return RevenueMotionData(
+        careers_page_url=careers_url,
+        ats_platform=ats_platform,
+        open_roles=all_roles,
+        role_counts=role_counts,
+        ae_to_sdr_ratio=ratio,
+        linkedin_employee_count=linkedin_employee_count,
+        linkedin_job_count=len(linkedin_roles),
+        findings=findings,
+        gaps=gaps,
+        discovery_questions=questions,
+        sources=sources,
+    )

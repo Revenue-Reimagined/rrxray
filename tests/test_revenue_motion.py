@@ -361,3 +361,87 @@ def test_emit_findings_no_roles_emits_finding():
     )
     finding_text = " ".join(f.text.lower() for f in findings)
     assert "no" in finding_text and ("careers" in finding_text or "roles" in finding_text or "open" in finding_text)
+
+
+def test_collect_writes_evidence(tmp_path):
+    ctx = _make_ctx(tmp_path, scrape_responses={
+        "https://acme.com/careers": {
+            "html": _load("careers_simple.html"),
+            "markdown": "",
+            "metadata": {"sourceURL": "https://acme.com/careers"},
+        },
+    })
+    asyncio.run(revenue_motion.collect(ctx))
+    evidence = tmp_path / "evidence" / "revenue_motion"
+    assert (evidence / "careers.html").exists()
+
+
+def test_collect_returns_revenue_motion_data(tmp_path):
+    from rrxray.schemas.revenue_motion import RevenueMotionData
+
+    ctx = _make_ctx(tmp_path, scrape_responses={
+        "https://acme.com/careers": {
+            "html": _load("careers_simple.html"),
+            "markdown": "",
+            "metadata": {"sourceURL": "https://acme.com/careers"},
+        },
+    }, search_responses={
+        "site:linkedin.com/jobs": [
+            {"url": "https://www.linkedin.com/jobs/view/123",
+             "title": "Account Executive at Acme",
+             "description": ""},
+        ],
+        "site:linkedin.com/company": [
+            {"url": "https://www.linkedin.com/company/acme",
+             "title": "Acme | LinkedIn",
+             "description": "Acme · Software · 200 employees on LinkedIn"},
+        ],
+    })
+    result = asyncio.run(revenue_motion.collect(ctx))
+    assert isinstance(result, RevenueMotionData)
+    assert result.careers_page_url == "https://acme.com/careers"
+    assert len(result.open_roles) >= 3
+    assert result.linkedin_employee_count == 200
+    assert result.linkedin_job_count == 1
+
+
+def test_collect_handles_no_careers_page(tmp_path):
+    ctx = _make_ctx(tmp_path, scrape_responses={})
+    result = asyncio.run(revenue_motion.collect(ctx))
+    assert result.careers_page_url is None
+    assert result.open_roles == []
+    assert len(result.findings) >= 1
+
+
+def test_collect_follows_ats_link(tmp_path):
+    ctx = _make_ctx(tmp_path, scrape_responses={
+        "https://acme.com/careers": {
+            "html": _load("careers_with_ats_link.html"),
+            "markdown": "",
+            "metadata": {"sourceURL": "https://acme.com/careers"},
+        },
+        "https://jobs.lever.co/acme": {
+            "html": _load("careers_simple.html"),
+            "markdown": "",
+            "metadata": {"sourceURL": "https://jobs.lever.co/acme"},
+        },
+    })
+    result = asyncio.run(revenue_motion.collect(ctx))
+    assert result.ats_platform == "lever"
+    assert any(r.source == "ats" for r in result.open_roles)
+
+
+def test_source_citation_path_relative_to_evidence_dir(tmp_path):
+    """SourceCitation.evidence_path must NOT start with 'evidence/' to avoid template double-prefix."""
+    ctx = _make_ctx(tmp_path, scrape_responses={
+        "https://acme.com/careers": {
+            "html": _load("careers_simple.html"),
+            "markdown": "",
+            "metadata": {"sourceURL": "https://acme.com/careers"},
+        },
+    })
+    result = asyncio.run(revenue_motion.collect(ctx))
+    for source in result.sources:
+        if source.evidence_path:
+            assert not source.evidence_path.startswith("evidence/")
+            assert source.evidence_path.startswith("revenue_motion/")
