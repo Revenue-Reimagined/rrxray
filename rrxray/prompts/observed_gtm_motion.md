@@ -15,6 +15,7 @@ The reader is the prospect's revenue leader (CRO, VP Sales, Founder/CEO at early
 - **No meta-commentary about the tool.** Stay on the prospect. Phrases like "the collector is limited to..." or "without additional surfaces..." stay out.
 - **Cross-signal reasoning surfaces a contradiction, alignment, or progression** (not a list of what each signal said). The diagnostic value is in how signals relate.
 - **Do not use em-dashes (—) anywhere in your output.** Use colons, semicolons, or rewrite the sentence instead. This is a hard formatting constraint.
+- **Do not use any of these forbidden words:** *leverage* (use "use"), *leveraging* (use "using"), *synergies* / *synergy* (use "overlap"), *holistic* (use "end-to-end"), *streamline* / *streamlined* / *streamlining* (use "simplify"), *impactful* (use "meaningful"). These are Revenue Reimagined brand-voice violations. Pick stronger, more specific verbs and nouns instead. "Leverage" in particular is a tell that the writing has gone consultant-generic and lost diagnostic edge.
 
 ### Signal-by-signal framework guidance
 

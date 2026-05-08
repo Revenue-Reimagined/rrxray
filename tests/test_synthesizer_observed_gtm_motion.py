@@ -4,8 +4,6 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from rrxray.context import SynthesizerContext
 from rrxray.schemas.data import CollectorOutputs
 from rrxray.schemas.pricing_packaging import PricingPackagingData, PricingTier
@@ -109,23 +107,30 @@ def test_synth_runs_voice_post_processor_on_paragraphs():
     assert result.narrative_paragraphs == ["This is fine."]
 
 
-def test_synth_raises_when_anthropic_returns_voice_violation():
+def test_synth_substitutes_forbidden_words_in_narrative():
+    """Forbidden words in LLM narrative are substituted by sanitize_llm_output, not raised.
+
+    Phase 2.1c update: a single forbidden-word emission used to fail the whole
+    synthesis (see git history). It now substitutes via sanitize_llm_output so
+    one stray "leverage" doesn't cost a full re-run. Vocabulary discipline still
+    holds in the rendered output: the substitute appears, the original does not.
+    """
     pricing = PricingPackagingData(
         has_public_pricing=True,
         is_contact_us_gated=False,
         current_pricing_url="https://example.com/pricing",
     )
-    from rrxray.voice.rr_voice import VoiceViolationError
-
     ctx = make_synth_ctx(
         pricing,
         make_anthropic_response(
-            ["We leverage the pricing data."],  # forbidden word; should raise
+            ["We leverage the pricing data."],  # forbidden word; should substitute
             ["clean bullet"],
         ),
     )
-    with pytest.raises(VoiceViolationError):
-        asyncio.run(observed_gtm_motion.synthesize(ctx))
+    result = asyncio.run(observed_gtm_motion.synthesize(ctx))
+    assert result is not None
+    assert "leverage" not in result.narrative_paragraphs[0].lower()
+    assert "use" in result.narrative_paragraphs[0].lower()
 
 
 def test_synth_records_cache_hit():
@@ -158,35 +163,37 @@ def test_synth_records_cache_hit():
     assert result.cache_hit is True
 
 
-def test_synth_voice_processes_gap_bullets():
+def test_synth_substitutes_forbidden_words_in_gap_bullets():
     pricing = PricingPackagingData(
         has_public_pricing=True, is_contact_us_gated=False,
         current_pricing_url="https://example.com/pricing",
     )
-    from rrxray.voice.rr_voice import VoiceViolationError
     ctx = make_synth_ctx(pricing, make_anthropic_response(
         ["Clean paragraph."],
-        ["We leverage data here."],  # forbidden word in bullet
+        ["We leverage data here."],
     ))
-    with pytest.raises(VoiceViolationError):
-        asyncio.run(observed_gtm_motion.synthesize(ctx))
+    result = asyncio.run(observed_gtm_motion.synthesize(ctx))
+    assert result is not None
+    assert "leverage" not in result.gap_bullets[0].lower()
+    assert "use" in result.gap_bullets[0].lower()
 
 
-def test_synth_voice_processes_discovery_questions():
+def test_synth_substitutes_forbidden_words_in_discovery_questions():
     pricing = PricingPackagingData(
         has_public_pricing=True, is_contact_us_gated=False,
         current_pricing_url="https://example.com/pricing",
     )
-    from rrxray.voice.rr_voice import VoiceViolationError
     ctx = make_synth_ctx(pricing, make_anthropic_response(
         ["Clean."], ["clean bullet"],
-        questions=["What synergies exist between teams?"],  # forbidden word
+        questions=["What synergies exist between teams?"],
     ))
-    with pytest.raises(VoiceViolationError):
-        asyncio.run(observed_gtm_motion.synthesize(ctx))
+    result = asyncio.run(observed_gtm_motion.synthesize(ctx))
+    assert result is not None
+    assert "synergies" not in result.discovery_questions[0].lower()
+    assert "overlap" in result.discovery_questions[0].lower()
 
 
-def test_synth_voice_processes_finding_text():
+def test_synth_substitutes_forbidden_words_in_finding_text():
     pricing = PricingPackagingData(
         has_public_pricing=True, is_contact_us_gated=False,
         current_pricing_url="https://example.com/pricing",
@@ -194,10 +201,9 @@ def test_synth_voice_processes_finding_text():
     from datetime import UTC, datetime
 
     from rrxray.schemas._shared import Finding, SourceCitation
-    from rrxray.voice.rr_voice import VoiceViolationError
 
     finding = Finding(
-        text="Pricing is impactful for the GTM motion.",  # forbidden word
+        text="Pricing is impactful for the GTM motion.",
         source=SourceCitation(
             url="https://example.com/pricing",
             timestamp=datetime(2026, 5, 1, tzinfo=UTC),
@@ -206,22 +212,25 @@ def test_synth_voice_processes_finding_text():
     ctx = make_synth_ctx(pricing, make_anthropic_response(
         ["Clean."], ["clean bullet"], findings=[finding],
     ))
-    with pytest.raises(VoiceViolationError):
-        asyncio.run(observed_gtm_motion.synthesize(ctx))
+    result = asyncio.run(observed_gtm_motion.synthesize(ctx))
+    assert result is not None
+    assert "impactful" not in result.findings[0].text.lower()
+    assert "meaningful" in result.findings[0].text.lower()
 
 
-def test_synth_voice_processes_gaps_field():
+def test_synth_substitutes_forbidden_words_in_gaps_field():
     pricing = PricingPackagingData(
         has_public_pricing=True, is_contact_us_gated=False,
         current_pricing_url="https://example.com/pricing",
     )
-    from rrxray.voice.rr_voice import VoiceViolationError
     ctx = make_synth_ctx(pricing, make_anthropic_response(
         ["Clean."], ["clean bullet"],
-        gaps=["holistic approach to pricing"],  # forbidden word
+        gaps=["holistic approach to pricing"],
     ))
-    with pytest.raises(VoiceViolationError):
-        asyncio.run(observed_gtm_motion.synthesize(ctx))
+    result = asyncio.run(observed_gtm_motion.synthesize(ctx))
+    assert result is not None
+    assert "holistic" not in result.gaps[0].lower()
+    assert "end-to-end" in result.gaps[0].lower()
 
 
 def test_synth_runs_with_tech_stack_only():

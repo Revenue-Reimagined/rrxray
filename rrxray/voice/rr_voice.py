@@ -59,14 +59,24 @@ class VoicePostProcessor:
         return self._apply(text, context, on_violation="raise")
 
     def sanitize_llm_output(self, text: str, context: str) -> str:
-        """Substitute em-dashes (LLM punctuation the prompt can't fully suppress).
+        """Substitute LLM-emitted voice violations the prompt can't fully suppress.
 
         Call this as a pre-pass on raw LLM strings before process_synthesizer_text.
-        Em-dashes are converted to colon or semicolon per house style.
-        Forbidden words and trademarks are NOT touched here; process_synthesizer_text
-        still raises on those so vocabulary discipline remains strict.
+        Em-dashes become colons or semicolons per house style. Forbidden words
+        (leverage, synergies, holistic, streamline, impactful, plus inflections)
+        are substituted to their RR equivalents. Trademark insertion is NOT
+        applied here; process_synthesizer_text handles that on the cleaned text.
+
+        Why substitute instead of raise: even with explicit prompt instructions,
+        the LLM occasionally emits a forbidden word once in a long output.
+        Failing the whole synthesis on a single emission costs a full re-run
+        for a problem that's mechanically fixable. Substituting at this layer
+        keeps vocabulary discipline strict in the rendered output without
+        wasting an entire generation on one misstep.
         """
-        return _EM_DASH_RE.sub(lambda m: self._em_dash_replacement(m, text, context), text)
+        text = _EM_DASH_RE.sub(lambda m: self._em_dash_replacement(m, text, context), text)
+        text = _FORBIDDEN_RE.sub(lambda m: self._forbidden_replacement(m, context), text)
+        return text
 
     def peek_log(self) -> list[VoiceEvent]:
         return list(self._log)

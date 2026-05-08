@@ -120,9 +120,12 @@ async def synthesize(ctx: SynthesizerContext) -> ObservedGtmMotionNarrative | No
     )
 
     # Voice post-processing on every synthesizer-generated string.
-    # sanitize_llm_output runs first to substitute em-dashes (punctuation the
-    # LLM can produce despite instructions); process_synthesizer_text then raises
-    # on forbidden vocabulary, which IS fully controllable via prompt.
+    # sanitize_llm_output runs first to substitute LLM-emitted voice
+    # violations the prompt can't fully suppress (em-dashes, occasional
+    # forbidden words like "leverage" / "synergies"). process_synthesizer_text
+    # then runs as a defense-in-depth check; any violation that survives
+    # sanitization (shouldn't happen given the substitution table covers all
+    # forbidden words) still raises rather than silently shipping.
     def _voice(text: str, ctx_label: str) -> str:
         clean = ctx.voice.sanitize_llm_output(text, context=ctx_label)
         return ctx.voice.process_synthesizer_text(clean, context=ctx_label)
