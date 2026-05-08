@@ -64,3 +64,6 @@ xray-*/
 evidence/
 !tests/fixtures/cache/
 !tests/fixtures/synthetic/
+
+# Claude Code worktrees and per-session state
+.claude/
