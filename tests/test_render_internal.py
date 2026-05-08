@@ -261,3 +261,32 @@ def test_tech_stack_renders_findings_with_voice_collector_filter():
     body = out.split("### Voice Adjustments")[0]
     assert "leverage" not in body
     assert "use marketing automation" in body or "use" in body
+
+
+def test_revenue_motion_module_detail_renders():
+    from rrxray.schemas.revenue_motion import JobPosting, RevenueMotionData
+
+    rm = RevenueMotionData(
+        careers_page_url="https://example.com/careers",
+        ats_platform="lever",
+        open_roles=[
+            JobPosting(title="Senior AE", category="ae", source="company_careers"),
+            JobPosting(title="SDR", category="sdr", source="company_careers"),
+        ],
+        role_counts={"ae": 1, "sdr": 1},
+        ae_to_sdr_ratio=1.0,
+        linkedin_employee_count=247,
+    )
+    data = make_data()
+    data.collectors.revenue_motion = rm
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "### Revenue Motion" in out
+    assert "Senior AE" in out
+    assert "lever" in out.lower()
+    assert "247" in out
+
+
+def test_revenue_motion_module_detail_omits_when_no_collector():
+    data = make_data()
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "### Revenue Motion" not in out
