@@ -76,7 +76,7 @@ This is non-negotiable. Dale's explicit ask: "best model for the best action for
 | Task type | Model | Rationale |
 |---|---|---|
 | Mechanical implementer (schema additions, fixtures, pipeline registration, single-line wiring) | **Haiku 4.5** (`claude-haiku-4-5-20251001`) | Pattern-following work |
-| Real-logic implementer (multi-function code, parsing, integration glue, edge cases) | **Sonnet 4.6** (`claude-sonnet-4-6`) | Standard judgment, multi-file coordination |
+| Real-logic implementer (multi-function code, parsing, integration glue, edge cases) | **Opus 4.7** (`claude-opus-4-7`) | Dale's explicit choice: pay the premium on logic-writing for the quality edge over Sonnet (catches subtle bugs, edge cases, race conditions). Updated 2026-05-08. |
 | Spec compliance review (checklist against design doc) | **Haiku 4.5** | Pure pattern matching against requirements |
 | Code quality review (bounded scope, named criteria) | **Haiku 4.5** | Most issues are obvious |
 | Final whole-branch code review | **Opus 4.7** (`claude-opus-4-7`) | Broad context, architectural reasoning |
