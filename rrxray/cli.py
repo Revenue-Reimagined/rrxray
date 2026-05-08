@@ -24,20 +24,51 @@ def _build_config(**kwargs) -> Config:
 
 
 def _print_dry_run_plan(config: Config) -> None:
+    from rrxray import pipeline
+
+    collector_names = [c.NAME for c in pipeline.COLLECTORS]
+    synth_names = [s.NAME for s in pipeline.SYNTHESIZERS]
+    has_revenue_motion = "revenue_motion" in collector_names
+
+    # Approximate call counts. Each collector scrapes 1-2 surfaces; pricing
+    # also pulls up to 3 Wayback snapshots; revenue_motion adds 2 LinkedIn
+    # search calls (jobs + employee count). Conditional ATS scrape (~1) not
+    # counted — present on roughly half of careers pages.
+    scrape_per_collector = 2
+    wayback_calls = 3
+    firecrawl_scrapes = len(collector_names) * scrape_per_collector + wayback_calls
+    firecrawl_searches = 2 if has_revenue_motion else 0
+
+    # Cost model: Firecrawl ~$0.005/call, Anthropic ~$0.027/synthesizer (uncached).
+    fc_cost = (firecrawl_scrapes + firecrawl_searches) * 0.005
+    ant_cost = len(synth_names) * 0.027
+    total = fc_cost + ant_cost
+
     typer.echo("Plan:")
     typer.echo(f"  Domain: {config.domain}")
-    typer.echo("  Collectors: pricing_packaging")
-    typer.echo("  Synthesizers: observed_gtm_motion (Phase 1: pricing-only)")
+    typer.echo(f"  Collectors: {', '.join(collector_names)}")
+    typer.echo(f"  Synthesizers: {', '.join(synth_names)}")
     typer.echo(f"  Mode: {config.mode}")
     typer.echo("")
     typer.echo("Estimated calls:")
-    typer.echo("  Firecrawl scrape_url: 4 (pricing page + 3 Wayback snapshots)")
-    typer.echo(f"  Anthropic complete: 1 ({config.model}, ~5K input + ~800 output)")
+    typer.echo(
+        f"  Firecrawl scrape_url: ~{firecrawl_scrapes} "
+        f"({len(collector_names)} collectors x ~{scrape_per_collector} + {wayback_calls} Wayback)"
+    )
+    if firecrawl_searches:
+        typer.echo(
+            f"  Firecrawl search: ~{firecrawl_searches} "
+            f"(LinkedIn jobs + employee count for revenue_motion)"
+        )
+    typer.echo(
+        f"  Anthropic complete: {len(synth_names)} "
+        f"({config.model}, ~5K input + ~800 output each)"
+    )
     typer.echo("")
     typer.echo("Estimated cost:")
-    typer.echo("  Firecrawl: ~$0.020")
-    typer.echo("  Anthropic: ~$0.027 uncached / ~$0.012 cached")
-    typer.echo("  Total: ~$0.04")
+    typer.echo(f"  Firecrawl: ~${fc_cost:.3f}")
+    typer.echo(f"  Anthropic: ~${ant_cost:.3f} uncached")
+    typer.echo(f"  Total: ~${total:.2f}")
     typer.echo("")
     typer.echo(f"Cache: {'enabled' if config.use_cache else 'disabled'} ({config.cache_dir})")
     typer.echo(f"Output: {config.resolved_output_dir()}")
