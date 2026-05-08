@@ -12,6 +12,29 @@
 
 ---
 
+## Step 0: Get the code
+
+The repo lives on GitHub at `https://github.com/Revenue-Reimagined/rrxray` (private). Dale will have invited your GitHub account as a collaborator before you read this. If you can't access the repo, that invite is the blocker — surface it to Dale.
+
+Clone it:
+
+```bash
+gh repo clone Revenue-Reimagined/rrxray
+# or, if you prefer SSH or don't have gh:
+# git clone https://github.com/Revenue-Reimagined/rrxray.git
+cd rrxray
+```
+
+Verify environment health before doing any work:
+
+```bash
+/Users/dalezwizinski/Library/Python/3.9/bin/uv run pytest -v 2>&1 | tail -3
+```
+
+Expected: `251 passed, 1 skipped`. If different, something has shifted from the recorded baseline; investigate before doing new work.
+
+---
+
 ## Read these in order before doing anything
 
 1. `CLAUDE.md` — project memory. Mandatory checkpoint rule, workflow conventions, model-selection matrix, brand voice rules, environment gotchas. **Non-negotiable.**
@@ -63,10 +86,10 @@ This project uses the `superpowers` skill family. Non-negotiable:
 
 1. **`superpowers:brainstorming`** → produces a design spec at `docs/superpowers/specs/<date>-rrxray-phase-2.2-leadership-stability-design.md`. STOP for Dale's review before moving to the plan.
 2. **`superpowers:writing-plans`** → produces an implementation plan at `docs/superpowers/plans/<date>-rrxray-phase-2.2-leadership-stability.md` with tasks in TDD checklist form.
-3. **`superpowers:subagent-driven-development`** → execute the plan, dispatching one subagent per task. Two-stage review (spec compliance + code quality) after each non-mechanical task.
+3. **`superpowers:subagent-driven-development`** → execute the plan, dispatching one subagent per task. Two-stage review (spec compliance + code quality) after each non-mechanical task. Push your branch to GitHub regularly (`git push -u origin feat/phase-2.2-leadership-stability`) so progress is visible to Dale and the other Coder.
 4. **Quality gate** — Dale-led live smoke against three real domains (typically Swayable, SQA Services, Linear; same as Phase 2.1b/2.1c so we get apples-to-apples comparison). Iterate the synthesizer prompt 1-2 times if needed.
-5. **Checkpoint** — write `docs/checkpoints/<date>-phase-2.2-checkpoint.md` BEFORE merging. Use `docs/checkpoints/TEMPLATE.md`. Read at least one prior checkpoint first to match the format.
-6. **PR / merge** to `main`.
+5. **Checkpoint** — write `docs/checkpoints/<date>-phase-2.2-checkpoint.md` BEFORE opening the PR. Use `docs/checkpoints/TEMPLATE.md`. Read at least one prior checkpoint first to match the format.
+6. **Open a PR** against `main` on GitHub (`gh pr create`). Dale reviews, merges, and closes the loop. Do NOT merge to `main` yourself; Dale gates the merge after validation.
 
 ---
 
