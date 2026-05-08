@@ -69,6 +69,32 @@ This workflow has caught real bugs across Phase 1 (substring matching corruption
 
 ---
 
+## MANDATORY: Model selection per task — Balance Quality, Cost, Speed
+
+This is non-negotiable. Dale's explicit ask: "best model for the best action for the best price." Apply on every subagent dispatch and every model decision. Default-to-Sonnet wastes budget on mechanical work; default-to-Haiku produces shallow design. Pick deliberately.
+
+| Task type | Model | Rationale |
+|---|---|---|
+| Mechanical implementer (schema additions, fixtures, pipeline registration, single-line wiring) | **Haiku 4.5** (`claude-haiku-4-5-20251001`) | Pattern-following work |
+| Real-logic implementer (multi-function code, parsing, integration glue, edge cases) | **Sonnet 4.6** (`claude-sonnet-4-6`) | Standard judgment, multi-file coordination |
+| Spec compliance review (checklist against design doc) | **Haiku 4.5** | Pure pattern matching against requirements |
+| Code quality review (bounded scope, named criteria) | **Haiku 4.5** | Most issues are obvious |
+| Final whole-branch code review | **Opus 4.7** (`claude-opus-4-7`) | Broad context, architectural reasoning |
+| Brainstorming, spec design, implementation-plan writing | **Opus 4.7** | Multi-step reasoning over ambiguous problem space |
+| Prompt tuning, brand-voice review, narrative-quality judgment | **Opus 4.7** | Taste work where Opus pulls clearly ahead of Sonnet |
+| Controller during quality-gate / iteration phases | **Opus 4.7** | High-stakes orchestration |
+| Controller during routine TDD execution | **Sonnet 4.6** | Orchestration only; reasoning is in subagents |
+| Live smoke runs, commits, mechanical checkpoint writing | **Sonnet 4.6 or Haiku 4.5** | Bash plumbing, no judgment |
+
+**Escalation signals:**
+- Subagent returns BLOCKED on a Sonnet implementer task → escalate to Opus and re-dispatch (don't retry Sonnet unless the gap was clearly contextual)
+- Haiku reviewer misses something Opus would catch → upgrade that review-step to Sonnet
+- "Mechanical" task takes >2 iterations → it wasn't actually mechanical; upgrade and re-dispatch
+
+**Push this forward:** Every checkpoint should record which model handled which task so the next session inherits the working pattern. If a model choice produced a bad outcome, document the specific failure rather than abandoning the matrix.
+
+---
+
 ## Environment gotchas
 
 These are real issues encountered during Phase 1; future sessions should know about them.
