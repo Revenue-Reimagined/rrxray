@@ -355,3 +355,70 @@ def test_pipeline_runs_section_a_with_both_collectors(tmp_path, monkeypatch):
     assert captured_ctx["pricing"] is not None
     assert captured_ctx["tech_stack"] is not None
     assert captured_ctx["tech_stack"].detected_tools[0].name == "HubSpot"
+
+
+def test_pipeline_runs_with_three_section_a_collectors(tmp_path, monkeypatch):
+    """Pipeline orchestrator passes all three Section A collectors into the synthesizer context."""
+    from rrxray.schemas.revenue_motion import JobPosting, RevenueMotionData
+    from rrxray.schemas.tech_stack import DetectedTool, TechStackData
+
+    config = fake_config(tmp_path)
+
+    fake_pricing = MagicMock()
+    fake_pricing.NAME = "pricing_packaging"
+    async def pricing_collect(ctx):
+        from rrxray.schemas.pricing_packaging import PricingPackagingData
+        return PricingPackagingData(
+            has_public_pricing=True, is_contact_us_gated=False,
+            current_pricing_url="https://example.com/pricing",
+        )
+    fake_pricing.collect = pricing_collect
+
+    fake_tech_stack = MagicMock()
+    fake_tech_stack.NAME = "tech_stack"
+    async def tech_collect(ctx):
+        return TechStackData(
+            detected_tools=[DetectedTool(
+                name="HubSpot", category="marketing_automation", confidence="high",
+                signature_id="hubspot:strict_js", matched_text="x",
+            )],
+            categories_observed=["marketing_automation"],
+            categories_absent=["analytics", "tag_manager", "chat", "product_analytics",
+                               "crm", "cdp", "ab_testing", "attribution"],
+        )
+    fake_tech_stack.collect = tech_collect
+
+    fake_revenue_motion = MagicMock()
+    fake_revenue_motion.NAME = "revenue_motion"
+    async def rm_collect(ctx):
+        return RevenueMotionData(
+            careers_page_url="https://example.com/careers",
+            open_roles=[JobPosting(title="AE", category="ae", source="company_careers")],
+            role_counts={"ae": 1},
+        )
+    fake_revenue_motion.collect = rm_collect
+
+    fake_synth = MagicMock()
+    fake_synth.NAME = "observed_gtm_motion"
+
+    captured_ctx = {}
+    async def synth_capture(ctx):
+        captured_ctx["pricing"] = ctx.collector_outputs.pricing_packaging
+        captured_ctx["tech_stack"] = ctx.collector_outputs.tech_stack
+        captured_ctx["revenue_motion"] = ctx.collector_outputs.revenue_motion
+        return None
+    fake_synth.synthesize = synth_capture
+
+    monkeypatch.setattr(pipeline, "COLLECTORS", [fake_pricing, fake_tech_stack, fake_revenue_motion])
+    monkeypatch.setattr(pipeline, "SYNTHESIZERS", [fake_synth])
+    monkeypatch.setattr(pipeline, "build_collector_context", lambda c: MagicMock())
+    monkeypatch.setattr(
+        pipeline, "build_synthesizer_context",
+        lambda c, o, v, a: MagicMock(collector_outputs=o, voice=v, anonymizer=a, config=c),
+    )
+
+    asyncio.run(pipeline.run_pipeline(config))
+    assert captured_ctx["pricing"] is not None
+    assert captured_ctx["tech_stack"] is not None
+    assert captured_ctx["revenue_motion"] is not None
+    assert captured_ctx["revenue_motion"].open_roles[0].title == "AE"
