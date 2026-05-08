@@ -1,0 +1,292 @@
+"""Markdown renderer: pure XrayData -> str function with anonymize + voice filters."""
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+import pytest
+
+from rrxray.rendering.markdown import render_internal
+from rrxray.schemas.data import (
+    CollectorOutputs,
+    InputParams,
+    ObservedGtmMotionNarrative,
+    RunMetadata,
+    SourceCitation,
+    SynthesizerOutputs,
+    XrayData,
+)
+from rrxray.schemas.pricing_packaging import PricingPackagingData, PricingTier
+from rrxray.voice.anonymizer import AnonymityViolationError, Anonymizer
+from rrxray.voice.rr_voice import VoicePostProcessor
+
+
+def make_data(
+    *,
+    pricing: PricingPackagingData | None = None,
+    narrative: ObservedGtmMotionNarrative | None = None,
+) -> XrayData:
+    return XrayData(
+        domain="example.com",
+        company_name="Example Inc.",
+        run_metadata=RunMetadata(
+            timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+            tool_version="0.1.0",
+            modes_built=["internal"],
+            model_used="claude-sonnet-4-6",
+        ),
+        inputs=InputParams(domain="example.com", mode="internal", model="claude-sonnet-4-6"),
+        collectors=CollectorOutputs(pricing_packaging=pricing),
+        synthesizers=SynthesizerOutputs(observed_gtm_motion=narrative),
+    )
+
+
+def test_full_skeleton_present():
+    data = make_data()
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    for header in [
+        "# GTM X-Ray™:",
+        "## 1. Executive Summary",
+        "## 2. Section A: Observed GTM Motion",
+        "## 3. Section B: Stability and Trajectory Signals",
+        "## 4. Section C: External Voice vs. Internal Voice",
+        "## 5. Module Detail Appendix",
+        "## 6. Discovery Questions",
+        "## 7. Sources & Methodology",
+    ]:
+        assert header in out
+
+
+def test_unavailable_module_renders_placeholder_string():
+    data = make_data()
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "[Module not available for this domain]" in out
+
+
+def test_section_a_renders_narrative_when_present():
+    narrative = ObservedGtmMotionNarrative(
+        narrative_paragraphs=["The motion appears self-serve.", "Pricing is published."],
+        gap_bullets=["Pricing has been static for 18 months"],
+        findings=[], gaps=[], discovery_questions=["Have you tested price increases?"],
+        model_used="claude-sonnet-4-6", cache_hit=False,
+    )
+    data = make_data(narrative=narrative)
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "The motion appears self-serve." in out
+    assert "→ Pricing has been static for 18 months" in out
+
+
+def test_pricing_detail_renders_tiers():
+    pricing = PricingPackagingData(
+        has_public_pricing=True, is_contact_us_gated=False,
+        current_pricing_url="https://example.com/pricing",
+        current_tiers=[
+            PricingTier(name="Starter", price="$0", cadence="month", notes=""),
+            PricingTier(name="Pro", price="$50", cadence="per seat per month", notes=""),
+        ],
+    )
+    data = make_data(pricing=pricing)
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "| Starter |" in out
+    assert "| Pro |" in out
+    assert "$50" in out
+
+
+def test_voice_collector_filter_substitutes():
+    pricing = PricingPackagingData(
+        has_public_pricing=True, is_contact_us_gated=False,
+        current_pricing_url="https://example.com/pricing",
+        current_tiers=[PricingTier(name="Pro", price="$50", cadence="month",
+                                    notes="We leverage data to set prices.")],
+    )
+    data = make_data(pricing=pricing)
+    voice = VoicePostProcessor()
+    out = render_internal(data, Anonymizer(), voice)
+    # "leverage" must not appear in rendered content; it is allowed in the Voice Adjustments
+    # audit section where it documents the substitution (per plan T22 AC #4)
+    body = out.split("### Voice Adjustments")[0]
+    assert "leverage" not in body
+    assert "use" in out  # substituted
+
+
+def test_anonymize_filter_replaces_registered_name():
+    narrative = ObservedGtmMotionNarrative(
+        narrative_paragraphs=["Sarah Chen leads sales."],
+        gap_bullets=["No SDR support"],
+        findings=[], gaps=[], discovery_questions=[],
+        model_used="x", cache_hit=False,
+    )
+    data = make_data(narrative=narrative)
+    a = Anonymizer()
+    a.register_individual("Sarah Chen", "the current VP of Sales")
+    out = render_internal(data, a, VoicePostProcessor())
+    assert "Sarah Chen" not in out
+    assert "the current VP of Sales leads sales." in out
+
+
+def test_sources_section_lists_all():
+    pricing = PricingPackagingData(
+        has_public_pricing=True, is_contact_us_gated=False,
+        current_pricing_url="https://example.com/pricing",
+    )
+    data = make_data(pricing=pricing)
+    data.sources = [SourceCitation(
+        url="https://example.com/pricing",
+        timestamp=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+        evidence_path="pricing_packaging/current.md",
+    )]
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "[https://example.com/pricing](https://example.com/pricing)" in out
+    assert "evidence/pricing_packaging/current.md" in out
+
+
+def test_voice_adjustments_section_present_when_substitutions_happened():
+    pricing = PricingPackagingData(
+        has_public_pricing=True, is_contact_us_gated=False,
+        current_pricing_url="https://example.com/pricing",
+        current_tiers=[PricingTier(
+            name="Pro", price="$50", cadence="month",
+            notes="We leverage data.",
+        )],
+    )
+    data = make_data(pricing=pricing)
+    voice = VoicePostProcessor()
+    out = render_internal(data, Anonymizer(), voice)
+    assert "### Voice Adjustments" in out
+    assert "forbidden_word" in out
+
+
+def test_known_limitations_section_present():
+    data = make_data()
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "### Known Limitations" in out
+    assert "LinkedIn" in out
+
+
+def test_render_raises_if_anonymizer_misses_a_registered_name(monkeypatch):
+    """If the renderer's filter is bypassed and a registered name reaches the output, raise."""
+    narrative = ObservedGtmMotionNarrative(
+        narrative_paragraphs=["text without registered names"],
+        gap_bullets=["x"],
+        findings=[], gaps=[], discovery_questions=[],
+        model_used="x", cache_hit=False,
+    )
+    data = make_data(narrative=narrative)
+    a = Anonymizer()
+    a.register_individual("Sarah Chen", "the VP")
+
+    # Manually inject a name into the data after construction
+    data.synthesizers.observed_gtm_motion.narrative_paragraphs[0] = "Sarah Chen leads."
+    monkeypatch.setattr(a, "anonymize", lambda x: x)  # disable replacement
+
+    with pytest.raises(AnonymityViolationError):
+        render_internal(data, a, VoicePostProcessor())
+
+
+def test_tech_stack_module_detail_renders_with_detections():
+    """When tech_stack has detected_tools, the Tech Stack subsection renders the table."""
+    from rrxray.schemas.tech_stack import DetectedTool, TechStackData
+
+    tech = TechStackData(
+        detected_tools=[
+            DetectedTool(
+                name="HubSpot", category="marketing_automation", confidence="high",
+                signature_id="hubspot:strict_js", matched_text="js.hs-scripts.com/x.js",
+            ),
+            DetectedTool(
+                name="Pendo", category="product_analytics", confidence="high",
+                signature_id="pendo:strict_agent", matched_text="cdn.pendo.io",
+            ),
+        ],
+        categories_observed=["marketing_automation", "product_analytics"],
+        categories_absent=["analytics", "tag_manager", "chat", "crm", "cdp", "ab_testing", "attribution"],
+    )
+    data = make_data()
+    data.collectors.tech_stack = tech
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "### Tech Stack" in out
+    assert "HubSpot" in out
+    assert "Pendo" in out
+    assert "marketing_automation" in out
+
+
+def test_tech_stack_module_detail_omits_when_no_collector():
+    """When tech_stack collector did not run, the Tech Stack subsection is absent."""
+    data = make_data()
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "### Tech Stack" not in out
+
+
+def test_tech_stack_module_detail_renders_categories_lists():
+    """categories_observed and categories_absent show up in render."""
+    from rrxray.schemas.tech_stack import DetectedTool, TechStackData
+
+    tech = TechStackData(
+        detected_tools=[DetectedTool(
+            name="HubSpot", category="marketing_automation", confidence="high",
+            signature_id="hubspot:strict_js", matched_text="x",
+        )],
+        categories_observed=["marketing_automation"],
+        categories_absent=["analytics", "crm"],
+    )
+    data = make_data()
+    data.collectors.tech_stack = tech
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "marketing_automation" in out
+    assert "analytics" in out  # in absent list
+    assert "crm" in out  # in absent list
+
+
+def test_tech_stack_renders_findings_with_voice_collector_filter():
+    """Findings text passes through voice_collector filter."""
+    from rrxray.schemas._shared import Finding, SourceCitation
+    from rrxray.schemas.tech_stack import DetectedTool, TechStackData
+
+    tech = TechStackData(
+        detected_tools=[DetectedTool(
+            name="HubSpot", category="marketing_automation", confidence="high",
+            signature_id="hubspot:strict_js", matched_text="x",
+        )],
+        findings=[Finding(
+            text="We leverage marketing automation for nurture.",  # forbidden word
+            source=SourceCitation(
+                url="https://example.com",
+                timestamp=datetime(2026, 5, 7, 12, 0, tzinfo=UTC),
+            ),
+        )],
+    )
+    data = make_data()
+    data.collectors.tech_stack = tech
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    # Voice substitution: "leverage" becomes "use" in the body before Voice Adjustments
+    body = out.split("### Voice Adjustments")[0]
+    assert "leverage" not in body
+    assert "use marketing automation" in body or "use" in body
+
+
+def test_revenue_motion_module_detail_renders():
+    from rrxray.schemas.revenue_motion import JobPosting, RevenueMotionData
+
+    rm = RevenueMotionData(
+        careers_page_url="https://example.com/careers",
+        ats_platform="lever",
+        open_roles=[
+            JobPosting(title="Senior AE", category="ae", source="company_careers"),
+            JobPosting(title="SDR", category="sdr", source="company_careers"),
+        ],
+        role_counts={"ae": 1, "sdr": 1},
+        ae_to_sdr_ratio=1.0,
+        linkedin_employee_count=247,
+    )
+    data = make_data()
+    data.collectors.revenue_motion = rm
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "### Revenue Motion" in out
+    assert "Senior AE" in out
+    assert "lever" in out.lower()
+    assert "247" in out
+
+
+def test_revenue_motion_module_detail_omits_when_no_collector():
+    data = make_data()
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "### Revenue Motion" not in out

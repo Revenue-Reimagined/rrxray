@@ -1,0 +1,46 @@
+{% set rm = data.collectors.revenue_motion %}
+**Careers page:** {{ rm.careers_page_url or "not found" }}
+**ATS platform:** {{ rm.ats_platform or "not detected" }}
+**Open roles:** {{ rm.open_roles | length }}
+
+{% if rm.role_counts %}
+| Category | Count |
+|---|---|
+{% for category, count in rm.role_counts.items() %}
+| {{ category }} | {{ count }} |
+{% endfor %}
+{% endif %}
+
+**AE-to-SDR ratio:** {{ "%.1f" | format(rm.ae_to_sdr_ratio) if rm.ae_to_sdr_ratio is not none else "n/a (zero in one or both)" }}
+**LinkedIn employee count:** {{ rm.linkedin_employee_count if rm.linkedin_employee_count is not none else "not detected" }}
+**LinkedIn job postings:** {{ rm.linkedin_job_count if rm.linkedin_job_count is not none else "not detected" }}
+
+{% if rm.open_roles %}
+**Open roles:**
+
+{% for role in rm.open_roles[:20] %}
+- [{{ role.category }}] {{ role.title | voice_collector }}{% if role.location %} ({{ role.location }}){% endif %}{% if role.source != "company_careers" %} (source: {{ role.source }}){% endif %}
+{% endfor %}
+{% endif %}
+
+{% if rm.findings %}
+**Findings:**
+
+{% for f in rm.findings %}
+- {{ f.text | voice_collector }} *(source: [{{ f.source.url }}]({{ f.source.url }}))*
+{% endfor %}
+{% endif %}
+
+{% if rm.gaps %}
+**Gaps:**
+{% for g in rm.gaps %}
+→ {{ g | voice_collector }}
+{% endfor %}
+{% endif %}
+
+{% if rm.discovery_questions %}
+**Discovery questions:**
+{% for q in rm.discovery_questions %}
+- {{ q }}
+{% endfor %}
+{% endif %}
