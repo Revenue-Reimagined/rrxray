@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from rrxray.collectors import revenue_motion
 from rrxray.context import CollectorContext
+from rrxray.schemas.revenue_motion import JobPosting
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "synthetic" / "revenue_motion"
 
@@ -277,3 +278,86 @@ def test_linkedin_employee_count_handles_search_failure(tmp_path):
     ctx.firecrawl.search = AsyncMock(side_effect=fail)
     count = asyncio.run(revenue_motion._linkedin_employee_count(ctx.firecrawl, "acme.com"))
     assert count is None
+
+
+def test_compute_role_metrics_basic():
+    roles = [
+        JobPosting(title="AE 1", category="ae", source="company_careers"),
+        JobPosting(title="AE 2", category="ae", source="company_careers"),
+        JobPosting(title="SDR 1", category="sdr", source="company_careers"),
+    ]
+    counts, ratio = revenue_motion._compute_role_metrics(roles)
+    assert counts["ae"] == 2
+    assert counts["sdr"] == 1
+    assert ratio == 2.0
+
+
+def test_compute_role_metrics_zero_sdr_returns_none_ratio():
+    roles = [
+        JobPosting(title="AE 1", category="ae", source="company_careers"),
+        JobPosting(title="AE 2", category="ae", source="company_careers"),
+    ]
+    counts, ratio = revenue_motion._compute_role_metrics(roles)
+    assert counts["ae"] == 2
+    assert ratio is None
+
+
+def test_compute_role_metrics_zero_ae_returns_none_ratio():
+    roles = [
+        JobPosting(title="SDR 1", category="sdr", source="company_careers"),
+    ]
+    _counts, ratio = revenue_motion._compute_role_metrics(roles)
+    assert ratio is None
+
+
+def test_emit_findings_high_ae_to_sdr_ratio():
+    roles = [
+        JobPosting(title=f"AE {i}", category="ae", source="company_careers")
+        for i in range(8)
+    ] + [JobPosting(title="SDR 1", category="sdr", source="company_careers")]
+    counts = {"ae": 8, "sdr": 1}
+    findings, gaps, _questions = revenue_motion._emit_findings(
+        domain="acme.com", careers_url="https://acme.com/careers",
+        roles=roles, counts=counts, ratio=8.0,
+        employee_count=None, ats_platform=None,
+    )
+    finding_text = " ".join(f.text.lower() for f in findings) + " " + " ".join(gaps).lower()
+    assert "ae" in finding_text or "sdr" in finding_text
+
+
+def test_emit_findings_ae_without_sdr():
+    roles = [
+        JobPosting(title="AE 1", category="ae", source="company_careers"),
+    ]
+    counts = {"ae": 1, "sdr": 0}
+    _findings, gaps, _questions = revenue_motion._emit_findings(
+        domain="acme.com", careers_url="https://acme.com/careers",
+        roles=roles, counts=counts, ratio=None,
+        employee_count=None, ats_platform=None,
+    )
+    gap_text = " ".join(gaps).lower()
+    assert "ae" in gap_text or "sdr" in gap_text or "founder" in gap_text
+
+
+def test_emit_findings_sales_leadership_posted():
+    roles = [
+        JobPosting(title="VP of Sales", category="sales_leadership", source="company_careers"),
+    ]
+    counts = {"sales_leadership": 1}
+    findings, _gaps, _q = revenue_motion._emit_findings(
+        domain="acme.com", careers_url="https://acme.com/careers",
+        roles=roles, counts=counts, ratio=None,
+        employee_count=None, ats_platform=None,
+    )
+    finding_text = " ".join(f.text.lower() for f in findings)
+    assert "leadership" in finding_text or "transition" in finding_text or "vp" in finding_text
+
+
+def test_emit_findings_no_roles_emits_finding():
+    findings, _gaps, _q = revenue_motion._emit_findings(
+        domain="acme.com", careers_url=None,
+        roles=[], counts={}, ratio=None,
+        employee_count=None, ats_platform=None,
+    )
+    finding_text = " ".join(f.text.lower() for f in findings)
+    assert "no" in finding_text and ("careers" in finding_text or "roles" in finding_text or "open" in finding_text)
