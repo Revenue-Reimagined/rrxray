@@ -303,6 +303,68 @@ def test_synth_returns_none_when_both_collectors_absent():
     ctx.anthropic.complete_with_cached_system.assert_not_called()
 
 
+def test_synth_runs_with_three_collectors():
+    """When all three Section A collectors are present, all three blocks render in the user message."""
+    from rrxray.schemas.revenue_motion import JobPosting, RevenueMotionData
+    pricing = PricingPackagingData(
+        has_public_pricing=True, is_contact_us_gated=False,
+        current_pricing_url="https://example.com/pricing",
+        current_tiers=[PricingTier(name="Pro", price="$50", cadence="month")],
+    )
+    tech = TechStackData(
+        detected_tools=[DetectedTool(
+            name="HubSpot", category="marketing_automation", confidence="high",
+            signature_id="hubspot:strict_js", matched_text="x",
+        )],
+        categories_observed=["marketing_automation"],
+        categories_absent=["analytics", "tag_manager", "chat", "product_analytics",
+                           "crm", "cdp", "ab_testing", "attribution"],
+    )
+    rm = RevenueMotionData(
+        careers_page_url="https://example.com/careers",
+        ats_platform="lever",
+        open_roles=[
+            JobPosting(title="Senior AE", category="ae", source="company_careers"),
+            JobPosting(title="SDR", category="sdr", source="company_careers"),
+        ],
+        role_counts={"ae": 1, "sdr": 1},
+        ae_to_sdr_ratio=1.0,
+        linkedin_employee_count=247,
+        linkedin_job_count=3,
+    )
+
+    fake_anthropic = MagicMock()
+    fake_anthropic.complete_with_cached_system = AsyncMock(
+        return_value=make_anthropic_response(
+            ["Three-signal narrative."],
+            ["Multi-signal observation"],
+        ),
+    )
+    config = MagicMock(domain="example.com", model="claude-sonnet-4-6")
+    config.evidence_dir = MagicMock()
+    ctx = SynthesizerContext(
+        collector_outputs=CollectorOutputs(
+            pricing_packaging=pricing,
+            tech_stack=tech,
+            revenue_motion=rm,
+        ),
+        anthropic=fake_anthropic,
+        voice=VoicePostProcessor(),
+        anonymizer=Anonymizer(),
+        config=config,
+    )
+
+    result = asyncio.run(observed_gtm_motion.synthesize(ctx))
+    assert result is not None
+    user_msg = ctx.anthropic.complete_with_cached_system.call_args.kwargs["user_message"]
+    assert "Pricing & Packaging signal" in user_msg
+    assert "Tech Stack signal" in user_msg
+    assert "Revenue Motion signal" in user_msg
+    assert "Senior AE" in user_msg
+    assert "lever" in user_msg.lower()
+    assert "247" in user_msg
+
+
 def test_user_message_renders_conditional_blocks():
     """Pricing-only path: user message has the pricing block populated; tech_stack falls back to 'not collected'."""
     pricing = PricingPackagingData(

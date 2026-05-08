@@ -58,14 +58,15 @@ def _render_user_message(
     domain: str,
     pricing,
     tech_stack,
+    revenue_motion=None,
     raw_pricing_text: str = "",
     raw_homepage_text: str = "",
 ) -> str:
     """Render the Section A user message.
 
-    Both `pricing` and `tech_stack` are optional. The Jinja template renders
-    a conditional block per signal: full data when present, "not collected"
-    fallback when None.
+    All three Section A collector outputs are optional. The Jinja template
+    renders a conditional block per signal: full data when present, "not
+    collected" fallback when None.
     """
     template_text = files("rrxray.prompts").joinpath("observed_gtm_motion.md").read_text()
     env = Environment(trim_blocks=True, lstrip_blocks=True)
@@ -73,6 +74,7 @@ def _render_user_message(
         domain=domain,
         pricing=pricing,
         tech_stack=tech_stack,
+        revenue_motion=revenue_motion,
         raw_pricing_text=raw_pricing_text,
         raw_homepage_text=raw_homepage_text,
     )
@@ -81,13 +83,11 @@ def _render_user_message(
 async def synthesize(ctx: SynthesizerContext) -> ObservedGtmMotionNarrative | None:
     pricing = ctx.collector_outputs.pricing_packaging
     tech_stack = ctx.collector_outputs.tech_stack
+    revenue_motion = ctx.collector_outputs.revenue_motion
 
-    # Skip only when ALL collectors absent (both failed / skipped)
-    if pricing is None and tech_stack is None:
-        log.info(
-            "All Section A collectors (pricing_packaging, tech_stack) absent; "
-            "skipping observed_gtm_motion synthesis"
-        )
+    # Skip only when ALL Section A collectors absent
+    if pricing is None and tech_stack is None and revenue_motion is None:
+        log.info("All Section A collectors absent; skipping observed_gtm_motion synthesis")
         return None
 
     # Read raw page excerpts from evidence (truncated to keep prompt size sane)
@@ -107,6 +107,7 @@ async def synthesize(ctx: SynthesizerContext) -> ObservedGtmMotionNarrative | No
         ctx.config.domain,
         pricing,
         tech_stack,
+        revenue_motion=revenue_motion,
         raw_pricing_text=raw_pricing_text,
         raw_homepage_text=raw_homepage_text,
     )

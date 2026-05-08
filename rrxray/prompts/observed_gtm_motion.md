@@ -38,6 +38,16 @@ A company's GTM motion can be inferred by reading multiple signals together:
 - No detectable martech = early-stage, privacy-led, server-side tagging, or low GTM maturity (commit to whichever is most likely given other signals; don't enumerate)
 - Live chat without marketing automation = inbound conversations not feeding nurture
 
+**Revenue motion (hiring shape) tells you:**
+
+- AE/SDR ratio > 4 = outbound under-resourced relative to AE coverage; pipeline likely AE-self-sourced or founder-led
+- AE count > 0 + SDR count == 0 = top of funnel is founder/AE responsibility; signals early-stage or recently-shifted motion
+- "First sales hire" / "Founding AE" titles = motion still founder-led, transitioning
+- "Enterprise AE" titles = upmarket positioning regardless of pricing
+- VP Sales / CRO / Head of Revenue posted = motion in transition (current leader gone or company growing)
+- Marketing leadership posted with no marketing ops = building demand-gen function from scratch
+- LinkedIn job count significantly different from careers page count = channel-specific recruiting
+
 **Raw page positioning copy tells you:**
 
 - Hero headline = self-described value proposition (often diverges from what buyers say)
@@ -101,6 +111,39 @@ Categories observed: {{ tech_stack.categories_observed | join(", ") if tech_stac
 Categories not detected: {{ tech_stack.categories_absent | join(", ") if tech_stack.categories_absent else "(all 9 categories observed)" }}
 {% else %}
 **Tech Stack signal:** not collected.
+{% endif %}
+
+{% if revenue_motion %}
+**Revenue Motion signal**
+
+- Careers page: {{ revenue_motion.careers_page_url or "not found" }}
+- ATS platform: {{ revenue_motion.ats_platform or "not detected" }}
+- Total open roles: {{ revenue_motion.open_roles | length }}
+
+Role counts by category:
+{% for category, count in revenue_motion.role_counts.items() %}
+- {{ category }}: {{ count }}
+{% endfor %}
+
+AE-to-SDR ratio: {{ "%.1f" | format(revenue_motion.ae_to_sdr_ratio) if revenue_motion.ae_to_sdr_ratio is not none else "n/a (zero in one or both)" }}
+LinkedIn employee count: {{ revenue_motion.linkedin_employee_count if revenue_motion.linkedin_employee_count is not none else "not detected" }}
+LinkedIn job postings on LinkedIn Jobs: {{ revenue_motion.linkedin_job_count if revenue_motion.linkedin_job_count is not none else "not detected" }}
+
+Specific roles open right now (up to 15):
+{% for role in revenue_motion.open_roles[:15] %}
+- [{{ role.category }}] {{ role.title }}{% if role.location %} ({{ role.location }}){% endif %}{% if role.source != "company_careers" %} (source: {{ role.source }}){% endif %}
+{% endfor %}
+
+Findings from the collector:
+{% if revenue_motion.findings %}
+{% for f in revenue_motion.findings %}
+- {{ f.text }}
+{% endfor %}
+{% else %}
+(none)
+{% endif %}
+{% else %}
+**Revenue Motion signal:** not collected.
 {% endif %}
 
 {% if raw_pricing_text %}
