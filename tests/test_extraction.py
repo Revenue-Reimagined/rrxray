@@ -52,6 +52,7 @@ def test_haiku_extractor_extracts_hire_announcement(fake_anthropic):
     result = asyncio.run(extractor.extract_exec_change(
         title="Acme Names Jane Doe as Chief Revenue Officer",
         snippet="Acme Corp today announced the appointment of Jane Doe as CRO.",
+        target_company="Acme",
     ))
 
     assert result is not None
@@ -76,6 +77,7 @@ def test_haiku_extractor_returns_none_on_irrelevant(fake_anthropic):
     result = asyncio.run(extractor.extract_exec_change(
         title="Acme Q3 Earnings Call",
         snippet="Quarterly results discussed.",
+        target_company="Acme",
     ))
     assert result is None
 
@@ -85,8 +87,58 @@ def test_haiku_extractor_returns_none_on_anthropic_error(fake_anthropic):
     fake_anthropic.complete_with_cached_system.side_effect = AnthropicError("simulated")
 
     extractor = HaikuExtractor(fake_anthropic)
-    result = asyncio.run(extractor.extract_exec_change("title", "snippet"))
+    result = asyncio.run(extractor.extract_exec_change(
+        "title", "snippet", target_company="Acme",
+    ))
     assert result is None
+
+
+def test_haiku_extractor_filters_other_company_announcements(fake_anthropic):
+    """Extractor returns None when the announcement is about a different company.
+
+    Mocks Haiku to return is_relevant=False for an Adobe-CEO announcement
+    when the target was Acme; the wrapper should drop it.
+    """
+    fake_anthropic.complete_with_cached_system.return_value = _FakeAnthropicResponse(
+        parsed=ExtractedExecChange(
+            name="",
+            role_canonical="ceo",
+            role_raw="",
+            action=ExecAction.HIRE,
+            is_relevant=False,
+        ),
+    )
+
+    extractor = HaikuExtractor(fake_anthropic)
+    result = asyncio.run(extractor.extract_exec_change(
+        title="Adobe Names Shantanu Narayen as Chairman",
+        snippet="Adobe Inc. today announced... (mentions Acme as a partner).",
+        target_company="Acme",
+    ))
+    assert result is None
+
+
+def test_haiku_extractor_keeps_target_company_announcement(fake_anthropic):
+    """Extractor returns the result when is_relevant=True for a target match."""
+    fake_anthropic.complete_with_cached_system.return_value = _FakeAnthropicResponse(
+        parsed=ExtractedExecChange(
+            name="Jane Doe",
+            role_canonical="cro",
+            role_raw="Chief Revenue Officer",
+            action=ExecAction.HIRE,
+            is_relevant=True,
+        ),
+    )
+
+    extractor = HaikuExtractor(fake_anthropic)
+    result = asyncio.run(extractor.extract_exec_change(
+        title="Acme Names Jane Doe as Chief Revenue Officer",
+        snippet="Acme Corp announced the appointment of Jane Doe as CRO.",
+        target_company="Acme",
+    ))
+    assert result is not None
+    assert result.name == "Jane Doe"
+    assert result.is_relevant is True
 
 
 def test_haiku_extractor_extract_linkedin_role(fake_anthropic):
@@ -104,6 +156,7 @@ def test_haiku_extractor_extract_linkedin_role(fake_anthropic):
         title="Bob Smith - Chief Marketing Officer at Acme - LinkedIn",
         snippet="Bob Smith. Chief Marketing Officer at Acme Corp. New York, NY.",
         role_query="cmo",
+        target_company="Acme",
     ))
 
     assert result is not None
@@ -132,6 +185,7 @@ def test_gemini_flash_extractor_extracts_hire_announcement(fake_gemini):
     result = asyncio.run(extractor.extract_exec_change(
         title="Acme Names Jane Doe as Chief Revenue Officer",
         snippet="...",
+        target_company="Acme",
     ))
     assert result is not None
     assert result.name == "Jane Doe"
@@ -149,7 +203,9 @@ def test_gemini_flash_extractor_returns_none_on_irrelevant(fake_gemini):
     )
 
     extractor = GeminiFlashExtractor(fake_gemini)
-    result = asyncio.run(extractor.extract_exec_change("x", "y"))
+    result = asyncio.run(extractor.extract_exec_change(
+        "x", "y", target_company="Acme",
+    ))
     assert result is None
 
 
@@ -158,7 +214,9 @@ def test_gemini_flash_extractor_returns_none_on_gemini_error(fake_gemini):
     fake_gemini.complete_structured.side_effect = GeminiError("simulated")
 
     extractor = GeminiFlashExtractor(fake_gemini)
-    result = asyncio.run(extractor.extract_exec_change("x", "y"))
+    result = asyncio.run(extractor.extract_exec_change(
+        "x", "y", target_company="Acme",
+    ))
     assert result is None
 
 

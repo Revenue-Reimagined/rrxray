@@ -64,9 +64,16 @@ class ExtractedLinkedInIncumbent(BaseModel):
 
 _EXEC_CHANGE_SYSTEM_PROMPT = """You extract structured exec-change records from press release titles and snippets.
 
-Given a title and snippet, identify whether it announces an executive hire, departure, or promotion. If yes, extract the person's name, the role they're moving into (or out of), and the action.
+The user message will begin with "Target company: <name>". You must verify that the announcement is unambiguously about that target company. If the title and snippet are about ANY OTHER company (e.g., a competitor's CEO change, an Apple/Tim Cook announcement, an Adobe leadership transition, an industry roundup mentioning the target only tangentially), set is_relevant=False even if the announcement otherwise looks like a clean exec change. The press release must be announcing an exec change AT the target company, not merely mentioning the target company in passing.
 
-Set is_relevant=True ONLY if both name and role are clearly stated. Set is_relevant=False if the title is not actually announcing an exec change (e.g., quarterly earnings, product launches, partnerships).
+Given a title and snippet, identify whether it announces an executive hire, departure, or promotion AT the target company. If yes, extract the person's name, the role they're moving into (or out of), and the action.
+
+Set is_relevant=True ONLY if ALL of the following hold:
+1. The announcement is clearly about the target company (not a different company that happens to be mentioned).
+2. Both the person's name and role are clearly stated.
+3. The title is actually announcing an exec change (not quarterly earnings, product launches, partnerships, or unrelated company news).
+
+Otherwise, set is_relevant=False.
 
 Map the role to one of these canonical values:
 - ceo
@@ -85,9 +92,16 @@ Action must be one of: hire, departure, promotion. Promotion = internal move (e.
 
 _LINKEDIN_INCUMBENT_SYSTEM_PROMPT = """You extract a person's name and current role from a LinkedIn search result.
 
-Given a search result title, snippet, and the role we were searching for, identify whether this result names a current incumbent in that role at the company.
+The user message will begin with "Target company: <name>". You must verify that the LinkedIn profile/snippet clearly indicates the person currently holds the role AT that target company. If the snippet shows the person is at a DIFFERENT company (a competitor, a similarly-named-but-distinct company, a former employer, or an unrelated firm that happens to surface in the search), set is_relevant=False — even if the role title matches.
 
-Set is_relevant=True ONLY if both name and role are clearly stated AND the role appears to be current (not a past role or unrelated context).
+Given a search result title, snippet, and the role we were searching for, identify whether this result names a current incumbent in that role at the target company.
+
+Set is_relevant=True ONLY if ALL of the following hold:
+1. The profile/snippet clearly indicates the person is currently at the target company (not a former role, not a similar-sounding different company, not a competitor).
+2. Both the person's name and role are clearly stated.
+3. The role appears to be current (not a past role or unrelated context).
+
+Otherwise, set is_relevant=False.
 
 Map role_canonical to: ceo, cro, vp_sales, vp_revenue, cmo, vp_marketing, founder. role_raw should preserve the wording from the result.
 """
@@ -97,12 +111,17 @@ class HaikuExtractor:
     def __init__(self, anthropic: AnthropicClient):
         self.anthropic = anthropic
 
-    async def extract_exec_change(self, title: str, snippet: str) -> ExtractedExecChange | None:
+    async def extract_exec_change(
+        self, title: str, snippet: str, target_company: str,
+    ) -> ExtractedExecChange | None:
         from rrxray.services.anthropic_client import AnthropicError
         try:
             response = await self.anthropic.complete_with_cached_system(
                 system_prompt=_EXEC_CHANGE_SYSTEM_PROMPT,
-                user_message=f"Title: {title}\n\nSnippet: {snippet}",
+                user_message=(
+                    f"Target company: {target_company}\n\n"
+                    f"Title: {title}\n\nSnippet: {snippet}"
+                ),
                 model="claude-haiku-4-5-20251001",
                 response_schema=ExtractedExecChange,
             )
@@ -113,13 +132,17 @@ class HaikuExtractor:
         return result if result.is_relevant else None
 
     async def extract_linkedin_role(
-        self, title: str, snippet: str, role_query: str,
+        self, title: str, snippet: str, role_query: str, target_company: str,
     ) -> ExtractedLinkedInIncumbent | None:
         from rrxray.services.anthropic_client import AnthropicError
         try:
             response = await self.anthropic.complete_with_cached_system(
                 system_prompt=_LINKEDIN_INCUMBENT_SYSTEM_PROMPT,
-                user_message=f"Role we were searching for: {role_query}\n\nTitle: {title}\n\nSnippet: {snippet}",
+                user_message=(
+                    f"Target company: {target_company}\n\n"
+                    f"Role we were searching for: {role_query}\n\n"
+                    f"Title: {title}\n\nSnippet: {snippet}"
+                ),
                 model="claude-haiku-4-5-20251001",
                 response_schema=ExtractedLinkedInIncumbent,
             )
@@ -134,12 +157,17 @@ class GeminiFlashExtractor:
     def __init__(self, gemini: GeminiClient):
         self.gemini = gemini
 
-    async def extract_exec_change(self, title: str, snippet: str) -> ExtractedExecChange | None:
+    async def extract_exec_change(
+        self, title: str, snippet: str, target_company: str,
+    ) -> ExtractedExecChange | None:
         from rrxray.services.gemini_client import GeminiError
         try:
             response = await self.gemini.complete_structured(
                 system_prompt=_EXEC_CHANGE_SYSTEM_PROMPT,
-                user_message=f"Title: {title}\n\nSnippet: {snippet}",
+                user_message=(
+                    f"Target company: {target_company}\n\n"
+                    f"Title: {title}\n\nSnippet: {snippet}"
+                ),
                 response_schema=ExtractedExecChange,
                 model="gemini-2.0-flash",
             )
@@ -150,13 +178,17 @@ class GeminiFlashExtractor:
         return result if result.is_relevant else None
 
     async def extract_linkedin_role(
-        self, title: str, snippet: str, role_query: str,
+        self, title: str, snippet: str, role_query: str, target_company: str,
     ) -> ExtractedLinkedInIncumbent | None:
         from rrxray.services.gemini_client import GeminiError
         try:
             response = await self.gemini.complete_structured(
                 system_prompt=_LINKEDIN_INCUMBENT_SYSTEM_PROMPT,
-                user_message=f"Role we were searching for: {role_query}\n\nTitle: {title}\n\nSnippet: {snippet}",
+                user_message=(
+                    f"Target company: {target_company}\n\n"
+                    f"Role we were searching for: {role_query}\n\n"
+                    f"Title: {title}\n\nSnippet: {snippet}"
+                ),
                 response_schema=ExtractedLinkedInIncumbent,
                 model="gemini-2.0-flash",
             )

@@ -107,7 +107,7 @@ def test_extract_exec_changes_filters_irrelevant():
         None,  # irrelevant
     ])
 
-    changes = asyncio.run(_extract_exec_changes(results, extractor))
+    changes = asyncio.run(_extract_exec_changes(results, extractor, "Acme"))
 
     assert len(changes) == 1
     assert changes[0].name == "Jane Doe"
@@ -126,7 +126,7 @@ def test_extract_exec_changes_handles_extractor_none():
     extractor = MagicMock()
     extractor.extract_exec_change = AsyncMock(side_effect=[None, None])
 
-    changes = asyncio.run(_extract_exec_changes(results, extractor))
+    changes = asyncio.run(_extract_exec_changes(results, extractor, "Acme"))
     assert changes == []
 
 
@@ -193,7 +193,7 @@ def test_extract_current_incumbents_dedupes_by_role_name():
         ExtractedLinkedInIncumbent(name="Jane Doe", role_canonical="cro", role_raw="CRO", is_relevant=True),
     ])
 
-    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor))
+    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor, "Acme"))
 
     assert len(incumbents) == 1
     assert incumbents[0].name == "Jane Doe"
@@ -226,7 +226,7 @@ def test_extract_current_incumbents_marks_post_url_low_confidence():
         ExtractedLinkedInIncumbent(name="Bob", role_canonical="cro", role_raw="CRO", is_relevant=True),
     ])
 
-    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor))
+    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor, "Acme"))
 
     by_name = {i.name: i for i in incumbents}
     assert by_name["Sara Lee"].confidence == "low"
@@ -260,7 +260,7 @@ def test_extract_current_incumbents_keeps_only_top_match_per_role():
         ExtractedLinkedInIncumbent(name="Second Person", role_canonical="cro", role_raw="CRO", is_relevant=True),
     ])
 
-    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor))
+    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor, "Acme"))
 
     assert len(incumbents) == 1
     assert incumbents[0].name == "First Person"
@@ -277,7 +277,7 @@ def test_extract_current_incumbents_drops_irrelevant():
     extractor = MagicMock()
     extractor.extract_linkedin_role = AsyncMock(return_value=None)
 
-    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor))
+    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor, "Acme"))
     assert incumbents == []
 
 

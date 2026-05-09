@@ -77,11 +77,19 @@ async def _search_press_releases(
 async def _extract_exec_changes(
     results: list[SearchResult],
     extractor: HaikuExtractor | GeminiFlashExtractor,
+    company: str,
 ) -> list[ExecChange]:
-    """Per-result extraction; filter is_relevant=False; preserve URL + title."""
+    """Per-result extraction; filter is_relevant=False; preserve URL + title.
+
+    The target company is passed through so the extractor can verify the
+    announcement is actually about the target (not a tangential mention of
+    another company's exec change).
+    """
     changes: list[ExecChange] = []
     for r in results:
-        extracted = await extractor.extract_exec_change(r.title, r.description)
+        extracted = await extractor.extract_exec_change(
+            r.title, r.description, company,
+        )
         if extracted is None:
             continue
         changes.append(ExecChange(
@@ -131,12 +139,15 @@ def _confidence_for_linkedin_url(url: str) -> str:
 async def _extract_current_incumbents(
     results_by_role: dict[str, list[SearchResult]],
     extractor: HaikuExtractor | GeminiFlashExtractor,
+    company: str,
 ) -> list[CurrentIncumbent]:
     """Per-result LLM extraction; dedupe by (role, name); preserve LinkedIn URL.
 
     For each role, walk results in order; the first relevant extraction
     becomes the incumbent for that role. Subsequent same-role-same-name
-    matches are skipped (dedup).
+    matches are skipped (dedup). The target company is passed through so the
+    extractor can verify the LinkedIn snippet is for someone currently at the
+    target (not a former employee or a similarly-named different company).
     """
     incumbents: list[CurrentIncumbent] = []
     seen: set[tuple[str, str]] = set()  # (role_canonical, name)
@@ -144,7 +155,7 @@ async def _extract_current_incumbents(
     for role_canonical, results in results_by_role.items():
         for r in results:
             extracted = await extractor.extract_linkedin_role(
-                r.title, r.description, role_canonical,
+                r.title, r.description, role_canonical, company,
             )
             if extracted is None:
                 continue
@@ -461,12 +472,12 @@ async def collect(ctx: CollectorContext) -> LeadershipStabilityData:
 
     # Press path
     press_results = await _search_press_releases(ctx.firecrawl, company)
-    exec_changes = await _extract_exec_changes(press_results, ctx.extractor)
+    exec_changes = await _extract_exec_changes(press_results, ctx.extractor, company)
 
     # LinkedIn path
     linkedin_results_by_role = await _search_linkedin_incumbents(ctx.firecrawl, company)
     current_incumbents = await _extract_current_incumbents(
-        linkedin_results_by_role, ctx.extractor,
+        linkedin_results_by_role, ctx.extractor, company,
     )
 
     # Founder tenure path
