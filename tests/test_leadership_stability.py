@@ -343,3 +343,218 @@ def test_infer_founder_tenure_about_page_failure_falls_through(fake_firecrawl):
 
     assert tenure.source == "wayback_homepage"
     assert tenure.inferred_year == 2016
+
+
+# ----------------------------------------------------------------------------
+# T10 — Name registrations
+# ----------------------------------------------------------------------------
+
+
+def test_build_name_registrations_press_whitelisted():
+    from rrxray.collectors.leadership_stability import _build_name_registrations
+    from rrxray.schemas.leadership_stability import ExecAction, ExecChange
+
+    exec_changes = [
+        ExecChange(
+            name="Jane Doe", role_canonical="cro", role_raw="CRO",
+            action=ExecAction.HIRE,
+            press_url="https://example.com/p/1",
+            press_title="Acme Names Jane Doe as CRO",
+        ),
+    ]
+    registrations = _build_name_registrations(exec_changes, [], company="Acme")
+
+    assert len(registrations) == 1
+    assert registrations[0].name == "Jane Doe"
+    assert registrations[0].whitelist is True
+    assert "CRO" in registrations[0].role_descriptor
+    assert "Acme" in registrations[0].role_descriptor
+
+
+def test_build_name_registrations_linkedin_not_whitelisted():
+    from rrxray.collectors.leadership_stability import _build_name_registrations
+    from rrxray.schemas.leadership_stability import CurrentIncumbent
+
+    incumbents = [
+        CurrentIncumbent(name="Bob Smith", role_canonical="cmo", role_raw="CMO"),
+    ]
+    registrations = _build_name_registrations([], incumbents, company="Acme")
+
+    assert len(registrations) == 1
+    assert registrations[0].name == "Bob Smith"
+    assert registrations[0].whitelist is False
+
+
+def test_build_name_registrations_dedupes():
+    """Same name in press + LinkedIn → single registration; press takes precedence."""
+    from rrxray.collectors.leadership_stability import _build_name_registrations
+    from rrxray.schemas.leadership_stability import (
+        CurrentIncumbent,
+        ExecAction,
+        ExecChange,
+    )
+
+    exec_changes = [
+        ExecChange(
+            name="Jane Doe", role_canonical="cro", role_raw="CRO",
+            action=ExecAction.HIRE,
+            press_url="x", press_title="y",
+        ),
+    ]
+    incumbents = [
+        CurrentIncumbent(name="Jane Doe", role_canonical="cro", role_raw="CRO"),
+    ]
+    registrations = _build_name_registrations(exec_changes, incumbents, company="Acme")
+
+    assert len(registrations) == 1
+    assert registrations[0].whitelist is True  # press wins
+
+
+def test_build_name_registrations_role_descriptor_format():
+    from rrxray.collectors.leadership_stability import _build_name_registrations
+    from rrxray.schemas.leadership_stability import CurrentIncumbent
+
+    incumbents = [
+        CurrentIncumbent(name="Bob Smith", role_canonical="vp_sales", role_raw="VP of Sales"),
+    ]
+    registrations = _build_name_registrations([], incumbents, company="Acme")
+
+    # Format: "Acme's VP Sales"
+    assert registrations[0].role_descriptor == "Acme's VP Sales"
+
+
+# ----------------------------------------------------------------------------
+# T10 — Findings emission
+# ----------------------------------------------------------------------------
+
+
+def test_emit_findings_seat_turnover():
+    """≥2 changes in same seat in past 18 months → seat-turnover finding."""
+    from datetime import date, timedelta
+
+    from rrxray.collectors.leadership_stability import _emit_findings
+    from rrxray.schemas.leadership_stability import ExecAction, ExecChange, FounderTenure
+
+    today = date.today()
+    exec_changes = [
+        ExecChange(
+            name="Person A", role_canonical="cro", role_raw="CRO",
+            action=ExecAction.HIRE,
+            occurred_at=today - timedelta(days=400),
+            press_url="x", press_title="y",
+        ),
+        ExecChange(
+            name="Person B", role_canonical="cro", role_raw="CRO",
+            action=ExecAction.HIRE,
+            occurred_at=today - timedelta(days=120),
+            press_url="x", press_title="y",
+        ),
+    ]
+    findings, _gaps, _questions = _emit_findings(
+        exec_changes, current_incumbents=[], founder_tenure=FounderTenure(),
+    )
+
+    finding_texts = [f.text for f in findings]
+    assert any("turned over" in t.lower() and "cro" in t.lower() for t in finding_texts)
+
+
+def test_emit_findings_recent_change():
+    """1 change in seat within 270 days → in-transition finding."""
+    from datetime import date, timedelta
+
+    from rrxray.collectors.leadership_stability import _emit_findings
+    from rrxray.schemas.leadership_stability import (
+        CurrentIncumbent,
+        ExecAction,
+        ExecChange,
+        FounderTenure,
+    )
+
+    today = date.today()
+    exec_changes = [
+        ExecChange(
+            name="Jane", role_canonical="cro", role_raw="CRO",
+            action=ExecAction.HIRE,
+            occurred_at=today - timedelta(days=120),
+            press_url="x", press_title="y",
+        ),
+    ]
+    incumbents = [CurrentIncumbent(name="Jane", role_canonical="cro", role_raw="CRO")]
+    findings, _gaps, _questions = _emit_findings(
+        exec_changes, incumbents, FounderTenure(),
+    )
+
+    finding_texts = [f.text for f in findings]
+    assert any("transition" in t.lower() for t in finding_texts)
+
+
+def test_emit_findings_concurrent_revenue_marketing():
+    """Recent CRO/VP Sales hire AND recent VP Marketing/CMO hire → cross-function finding."""
+    from datetime import date, timedelta
+
+    from rrxray.collectors.leadership_stability import _emit_findings
+    from rrxray.schemas.leadership_stability import ExecAction, ExecChange, FounderTenure
+
+    today = date.today()
+    exec_changes = [
+        ExecChange(
+            name="A", role_canonical="cro", role_raw="CRO",
+            action=ExecAction.HIRE,
+            occurred_at=today - timedelta(days=100),
+            press_url="x", press_title="y",
+        ),
+        ExecChange(
+            name="B", role_canonical="cmo", role_raw="CMO",
+            action=ExecAction.HIRE,
+            occurred_at=today - timedelta(days=150),
+            press_url="x", press_title="y",
+        ),
+    ]
+    findings, _gaps, _questions = _emit_findings(exec_changes, [], FounderTenure())
+
+    finding_texts = [f.text for f in findings]
+    assert any("revenue and marketing" in t.lower() or "redesigned" in t.lower() for t in finding_texts)
+
+
+def test_emit_findings_founder_led_long_tenure():
+    """Founder ≥7 years AND current CEO incumbent matches founder → stability finding."""
+    from datetime import date
+
+    from rrxray.collectors.leadership_stability import _emit_findings
+    from rrxray.schemas.leadership_stability import CurrentIncumbent, FounderTenure
+
+    incumbents = [
+        CurrentIncumbent(name="Jane Doe", role_canonical="ceo", role_raw="CEO"),
+        CurrentIncumbent(name="Jane Doe", role_canonical="founder", role_raw="Founder"),
+    ]
+    tenure = FounderTenure(inferred_year=date.today().year - 8, source="about_page")
+
+    findings, _gaps, _questions = _emit_findings([], incumbents, tenure)
+
+    finding_texts = [f.text for f in findings]
+    assert any("founder-led" in t.lower() for t in finding_texts)
+
+
+def test_emit_findings_no_press_signal():
+    """LinkedIn returned ≥1 incumbent AND zero exec changes → stability inferred."""
+    from rrxray.collectors.leadership_stability import _emit_findings
+    from rrxray.schemas.leadership_stability import CurrentIncumbent, FounderTenure
+
+    incumbents = [
+        CurrentIncumbent(name="x", role_canonical="cro", role_raw="CRO"),
+    ]
+    findings, _gaps, _questions = _emit_findings([], incumbents, FounderTenure())
+
+    finding_texts = [f.text for f in findings]
+    assert any("stability inferred" in t.lower() or "no public exec announcements" in t.lower() for t in finding_texts)
+
+
+def test_emit_findings_total_signal_loss():
+    """All paths empty → 'signal not recovered' finding."""
+    from rrxray.collectors.leadership_stability import _emit_findings
+    from rrxray.schemas.leadership_stability import FounderTenure
+
+    findings, _gaps, _questions = _emit_findings([], [], FounderTenure(source="unknown"))
+
+    finding_texts = [f.text for f in findings]
+    assert any("not recovered" in t.lower() or "discovery" in t.lower() for t in finding_texts)

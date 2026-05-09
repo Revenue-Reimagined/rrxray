@@ -12,18 +12,23 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
 from rrxray.collectors._leadership_stability_catalog import (
     FOUNDED_YEAR_PATTERNS,
     LEADERSHIP_ROLES,
     PRESS_ACTION_QUERIES,
+    RECENT_THRESHOLD_DAYS,
+    ROLE_DISPLAY,
 )
+from rrxray.schemas._shared import Finding, SourceCitation
 from rrxray.schemas.leadership_stability import (
     CurrentIncumbent,
     ExecChange,
     FounderTenure,
     LeadershipStabilityData,
+    NameRegistration,
 )
 
 if TYPE_CHECKING:
@@ -222,13 +227,182 @@ async def _infer_founder_tenure(
     return FounderTenure(source="unknown")
 
 
+# Synthetic URL prefix for findings not anchored to a single source URL.
+# SourceCitation requires url+timestamp; collector-derived findings use this
+# label-style scheme so the report renderer can group them.
+_INTERNAL_SOURCE_PREFIX = "rrxray://leadership_stability/"
+
+
+def _internal_source(label: str) -> SourceCitation:
+    return SourceCitation(
+        url=f"{_INTERNAL_SOURCE_PREFIX}{label}",
+        timestamp=datetime.now(UTC),
+    )
+
+
+def _build_name_registrations(
+    exec_changes: list[ExecChange],
+    current_incumbents: list[CurrentIncumbent],
+    company: str,
+) -> list[NameRegistration]:
+    """Build deduped name registrations.
+
+    Press names: whitelist=True. LinkedIn-only names: whitelist=False.
+    Same name in both → single record; press takes precedence (whitelist=True wins).
+    """
+    by_name: dict[str, NameRegistration] = {}
+
+    # Press names first (whitelist=True)
+    for change in exec_changes:
+        if not change.name:
+            continue
+        descriptor = f"{company}'s {ROLE_DISPLAY.get(change.role_canonical, change.role_raw)}"
+        by_name[change.name] = NameRegistration(
+            name=change.name,
+            role_descriptor=descriptor,
+            whitelist=True,
+        )
+
+    # LinkedIn names — only register if not already in press (don't downgrade whitelist)
+    for inc in current_incumbents:
+        if not inc.name or inc.name in by_name:
+            continue
+        descriptor = f"{company}'s {ROLE_DISPLAY.get(inc.role_canonical, inc.role_raw)}"
+        by_name[inc.name] = NameRegistration(
+            name=inc.name,
+            role_descriptor=descriptor,
+            whitelist=False,
+        )
+
+    return list(by_name.values())
+
+
+def _emit_findings(
+    exec_changes: list[ExecChange],
+    current_incumbents: list[CurrentIncumbent],
+    founder_tenure: FounderTenure,
+) -> tuple[list[Finding], list[str], list[str]]:
+    """Rule-based findings, gaps, and discovery questions per spec rules table."""
+    findings: list[Finding] = []
+    gaps: list[str] = []
+    questions: list[str] = []
+    today = date.today()
+    now = datetime.now(UTC)
+
+    # Rule 1: ≥2 changes in same seat in past 18 months → seat-turnover finding
+    seat_counts: dict[str, int] = {}
+    for c in exec_changes:
+        seat_counts[c.role_canonical] = seat_counts.get(c.role_canonical, 0) + 1
+    for role, count in seat_counts.items():
+        if count >= 2:
+            display = ROLE_DISPLAY.get(role, role)
+            # Anchor to the most recent press URL for that role, if available
+            same_role = [c for c in exec_changes if c.role_canonical == role]
+            anchor = same_role[0]
+            findings.append(Finding(
+                text=(
+                    f"{display} seat has turned over {count} times in the past "
+                    f"18 months → buyer-side ownership of the conversation may "
+                    f"shift mid-cycle."
+                ),
+                source=SourceCitation(url=anchor.press_url, timestamp=now),
+            ))
+
+    # Rule 2: 1 change in seat ≤RECENT_THRESHOLD_DAYS → in-transition finding
+    recent_role_changes: dict[str, ExecChange] = {}
+    for c in exec_changes:
+        if c.occurred_at is None:
+            continue
+        days_ago = (today - c.occurred_at).days
+        if days_ago <= RECENT_THRESHOLD_DAYS:
+            # Only flag once per role; latest change wins
+            existing = recent_role_changes.get(c.role_canonical)
+            if existing is None or (
+                existing.occurred_at and c.occurred_at > existing.occurred_at
+            ):
+                recent_role_changes[c.role_canonical] = c
+    for role, change in recent_role_changes.items():
+        if seat_counts.get(role, 0) >= 2:
+            continue  # already covered by Rule 1
+        display = ROLE_DISPLAY.get(role, role)
+        days_ago = (today - change.occurred_at).days  # type: ignore[operator]
+        months_in_role = max(1, days_ago // 30)
+        findings.append(Finding(
+            text=(
+                f"{display} is in transition; current incumbent in seat "
+                f"~{months_in_role} months → motion direction likely still "
+                f"being defined."
+            ),
+            source=SourceCitation(url=change.press_url, timestamp=now),
+        ))
+
+    # Rule 3: concurrent recent revenue + marketing leadership change
+    revenue_recent = any(
+        r in recent_role_changes for r in ("cro", "vp_sales", "vp_revenue")
+    )
+    marketing_recent = any(
+        r in recent_role_changes for r in ("cmo", "vp_marketing")
+    )
+    if revenue_recent and marketing_recent:
+        findings.append(Finding(
+            text=(
+                "Both revenue and marketing leadership turned over within "
+                "9 months → top-of-funnel and pipeline motion both being "
+                "redesigned simultaneously."
+            ),
+            source=_internal_source("cross_function"),
+        ))
+
+    # Rule 4: founder ≥7 years AND current CEO incumbent matches founder name
+    founder_names = {i.name for i in current_incumbents if i.role_canonical == "founder"}
+    ceo_incumbent_names = {i.name for i in current_incumbents if i.role_canonical == "ceo"}
+    founder_in_ceo_seat = bool(founder_names & ceo_incumbent_names)
+    tenure_years = (
+        today.year - founder_tenure.inferred_year if founder_tenure.inferred_year else None
+    )
+    if founder_in_ceo_seat and tenure_years is not None and tenure_years >= 7:
+        findings.append(Finding(
+            text=(
+                f"Founder-led for {tenure_years} years → decision authority "
+                f"concentrated; commitment risk on multi-quarter buying "
+                f"decisions is lower than at professionally-led peers."
+            ),
+            source=_internal_source("founder_tenure"),
+        ))
+
+    # Rule 5: founder tenure unknown AND zero current incumbents
+    if founder_tenure.source == "unknown" and not current_incumbents:
+        findings.append(Finding(
+            text=(
+                "Leadership signal not recovered from public sources → "
+                "discovery should establish leadership stability and recent "
+                "change directly."
+            ),
+            source=_internal_source("signal_loss"),
+        ))
+        questions.append(
+            "Who is your current CRO and CMO? How long have they been in seat?"
+        )
+
+    # Rule 6: incumbents present AND zero exec changes
+    if current_incumbents and not exec_changes:
+        findings.append(Finding(
+            text=(
+                "No public exec announcements in past 18 months → leadership "
+                "stability inferred (within the limits of public-record "
+                "visibility)."
+            ),
+            source=_internal_source("no_press_signal"),
+        ))
+
+    return findings, gaps, questions
+
+
 async def collect(ctx: CollectorContext) -> LeadershipStabilityData:
     """Orchestrator. Phase 2.2 T7-T11 incrementally fills this in."""
     company = ctx.company_name or ctx.domain.split(".")[0].title()
     if ctx.extractor is None:
-        return LeadershipStabilityData(
-            findings=[],  # T10 will fill in graceful-degradation finding
-        )
+        return LeadershipStabilityData()
 
     press_results = await _search_press_releases(ctx.firecrawl, company)
     exec_changes = await _extract_exec_changes(press_results, ctx.extractor)
@@ -238,9 +412,19 @@ async def collect(ctx: CollectorContext) -> LeadershipStabilityData:
 
     founder_tenure = await _infer_founder_tenure(ctx.firecrawl, ctx.wayback, ctx.domain)
 
-    # T10-T11 fill in the rest
+    name_registrations = _build_name_registrations(
+        exec_changes, current_incumbents, company,
+    )
+    findings, gaps, questions = _emit_findings(
+        exec_changes, current_incumbents, founder_tenure,
+    )
+
     return LeadershipStabilityData(
         exec_changes=exec_changes,
         current_incumbents=current_incumbents,
         founder_tenure=founder_tenure,
+        name_registrations=name_registrations,
+        findings=findings,
+        gaps=gaps,
+        discovery_questions=questions,
     )
