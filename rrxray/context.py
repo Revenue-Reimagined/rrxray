@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from rrxray.config import Config
     from rrxray.schemas.data import CollectorOutputs
     from rrxray.services.anthropic_client import AnthropicClient
+    from rrxray.services.extraction import GeminiFlashExtractor, HaikuExtractor
     from rrxray.services.firecrawl_client import FirecrawlClient
     from rrxray.services.wayback_client import WaybackClient
     from rrxray.voice.anonymizer import Anonymizer
@@ -23,6 +24,7 @@ class CollectorContext:
     wayback: WaybackClient
     evidence_dir: Path
     config: Config
+    extractor: HaikuExtractor | GeminiFlashExtractor | None = None
 
 
 @dataclass(frozen=True)
