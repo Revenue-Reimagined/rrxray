@@ -22,7 +22,9 @@ from rrxray.schemas.data import (
 )
 from rrxray.services.anthropic_client import AnthropicClient
 from rrxray.services.cache import DiskCache
+from rrxray.services.extraction import make_extractor
 from rrxray.services.firecrawl_client import FirecrawlClient
+from rrxray.services.gemini_client import GeminiClient
 from rrxray.services.wayback_client import WaybackClient
 from rrxray.synthesizers import observed_gtm_motion
 from rrxray.voice.anonymizer import Anonymizer
@@ -33,6 +35,19 @@ log = logging.getLogger("rrxray.pipeline")
 # Phase 2 will append to these lists.
 COLLECTORS = [pricing_packaging, tech_stack, revenue_motion]
 SYNTHESIZERS = [observed_gtm_motion]
+
+
+def _register_collector_names(anonymizer, name_registrations) -> None:
+    """Apply NameRegistration entries to the anonymizer.
+
+    Called by the pipeline post-collection. Press-whitelisted names get
+    both register_individual + whitelist_from_press; LinkedIn-only names
+    get register_individual only.
+    """
+    for reg in name_registrations:
+        anonymizer.register_individual(reg.name, reg.role_descriptor)
+        if reg.whitelist:
+            anonymizer.whitelist_from_press(reg.name)
 
 
 def build_collector_context(config) -> CollectorContext:
@@ -46,6 +61,14 @@ def build_collector_context(config) -> CollectorContext:
         firecrawl=firecrawl,
         cache=DiskCache(dir=cache_root / "wayback", mode="live" if config.use_cache else "refresh"),
     )
+    anthropic = AnthropicClient(
+        api_key=config.anthropic_api_key.get_secret_value() if config.anthropic_api_key else "",
+        cache=DiskCache(dir=cache_root / "anthropic", mode="live" if config.use_cache else "refresh"),
+    )
+    gemini = None
+    if getattr(config, "gemini_api_key", None) is not None:
+        gemini = GeminiClient(api_key=config.gemini_api_key.get_secret_value())
+    extractor = make_extractor(config, anthropic, gemini)
     return CollectorContext(
         domain=config.domain,
         company_name=config.company_name,
@@ -53,6 +76,7 @@ def build_collector_context(config) -> CollectorContext:
         wayback=wayback,
         evidence_dir=config.evidence_dir,
         config=config,
+        extractor=extractor,
     )
 
 
@@ -152,6 +176,11 @@ async def run_pipeline(config) -> tuple[XrayData, str]:
 
     collector_ctx = build_collector_context(config)
     collector_outputs, collector_failures = await run_collectors(collector_ctx)
+
+    # Apply per-collector name registrations to the anonymizer.
+    leadership = collector_outputs.leadership_stability
+    if leadership is not None:
+        _register_collector_names(anonymizer, leadership.name_registrations)
 
     synth_ctx = build_synthesizer_context(config, collector_outputs, voice, anonymizer)
     synth_outputs, synth_failures = await run_synthesizers(synth_ctx)
