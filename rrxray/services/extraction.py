@@ -64,16 +64,18 @@ class ExtractedLinkedInIncumbent(BaseModel):
 
 _EXEC_CHANGE_SYSTEM_PROMPT = """You extract structured exec-change records from press release titles and snippets.
 
-The user message will begin with "Target company: <name>". You must verify that the announcement is unambiguously about that target company. If the title and snippet are about ANY OTHER company (e.g., a competitor's CEO change, an Apple/Tim Cook announcement, an Adobe leadership transition, an industry roundup mentioning the target only tangentially), set is_relevant=False even if the announcement otherwise looks like a clean exec change. The press release must be announcing an exec change AT the target company, not merely mentioning the target company in passing.
+The user message will begin with "Target company: <name>" and "Target domain: <domain>". The target company is identified by both name and domain. The DOMAIN is the authoritative identifier. Many companies share generic words in their names (e.g., "Linear" could be Linear the project management tool at linear.app, OR Linear Retail, OR Linear Health Sciences, OR Linear Clinical Research, OR Linear Air — these are all different companies). If the press release is about a different organization that shares part of the target's name, set is_relevant=False.
+
+You must verify that the announcement is unambiguously about that target company. If the title and snippet are about ANY OTHER company (e.g., a competitor's CEO change, an Apple/Tim Cook announcement, an Adobe leadership transition, an industry roundup mentioning the target only tangentially, or a same-name-different-organization match), set is_relevant=False even if the announcement otherwise looks like a clean exec change. The press release must be announcing an exec change AT the company at the target domain, not merely mentioning the target in passing.
 
 Given a title and snippet, identify whether it announces an executive hire, departure, or promotion AT the target company. If yes, extract the person's name, the role they're moving into (or out of), and the action.
 
-Set is_relevant=True ONLY if ALL of the following hold:
-1. The announcement is clearly about the target company (not a different company that happens to be mentioned).
+Set is_relevant=True ONLY when ALL of the following are met:
+1. The announcement is unambiguously about the company at the target domain (or you can confirm it from explicit context like the company's full name matching, the press release URL pointing to the target's domain, or text in the snippet identifying the target).
 2. Both the person's name and role are clearly stated.
-3. The title is actually announcing an exec change (not quarterly earnings, product launches, partnerships, or unrelated company news).
+3. The action is genuinely a hire, departure, or promotion (not a routine product announcement, conference talk, partnership, quarterly earnings, etc.).
 
-Otherwise, set is_relevant=False.
+When in doubt, set is_relevant=False. False positives produce confidently-wrong synthesizer narratives; false negatives only mean the report has less data, which is recoverable in discovery.
 
 Map the role to one of these canonical values:
 - ceo
@@ -92,16 +94,18 @@ Action must be one of: hire, departure, promotion. Promotion = internal move (e.
 
 _LINKEDIN_INCUMBENT_SYSTEM_PROMPT = """You extract a person's name and current role from a LinkedIn search result.
 
-The user message will begin with "Target company: <name>". You must verify that the LinkedIn profile/snippet clearly indicates the person currently holds the role AT that target company. If the snippet shows the person is at a DIFFERENT company (a competitor, a similarly-named-but-distinct company, a former employer, or an unrelated firm that happens to surface in the search), set is_relevant=False — even if the role title matches.
+The user message will begin with "Target company: <name>" and "Target domain: <domain>". The target company is identified by both name and domain. The DOMAIN is the authoritative identifier. Many companies share generic words in their names (e.g., "Linear" could be Linear the project management tool at linear.app, OR Linear Retail, OR Linear Health Sciences, OR Linear Clinical Research, OR Linear Air — these are all different companies). Set is_relevant=True ONLY when the LinkedIn snippet clearly indicates the person currently holds this role at the company at the target domain — not at a different company that shares part of the target's name, and not at a previous company in the person's history.
+
+You must verify that the LinkedIn profile/snippet clearly indicates the person currently holds the role AT that target company. If the snippet shows the person is at a DIFFERENT company (a competitor, a similarly-named-but-distinct company, a former employer, or an unrelated firm that happens to surface in the search), set is_relevant=False — even if the role title matches.
 
 Given a search result title, snippet, and the role we were searching for, identify whether this result names a current incumbent in that role at the target company.
 
 Set is_relevant=True ONLY if ALL of the following hold:
-1. The profile/snippet clearly indicates the person is currently at the target company (not a former role, not a similar-sounding different company, not a competitor).
+1. The profile/snippet clearly indicates the person is currently at the company at the target domain (not a former role, not a similar-sounding different company, not a competitor).
 2. Both the person's name and role are clearly stated.
 3. The role appears to be current (not a past role or unrelated context).
 
-Otherwise, set is_relevant=False.
+Otherwise, set is_relevant=False. When in doubt, set is_relevant=False. False positives produce confidently-wrong synthesizer narratives; false negatives only mean the report has less data, which is recoverable in discovery.
 
 Map role_canonical to: ceo, cro, vp_sales, vp_revenue, cmo, vp_marketing, founder. role_raw should preserve the wording from the result.
 """
@@ -112,14 +116,15 @@ class HaikuExtractor:
         self.anthropic = anthropic
 
     async def extract_exec_change(
-        self, title: str, snippet: str, target_company: str,
+        self, title: str, snippet: str, target_company: str, target_domain: str,
     ) -> ExtractedExecChange | None:
         from rrxray.services.anthropic_client import AnthropicError
         try:
             response = await self.anthropic.complete_with_cached_system(
                 system_prompt=_EXEC_CHANGE_SYSTEM_PROMPT,
                 user_message=(
-                    f"Target company: {target_company}\n\n"
+                    f"Target company: {target_company}\n"
+                    f"Target domain: {target_domain}\n\n"
                     f"Title: {title}\n\nSnippet: {snippet}"
                 ),
                 model="claude-haiku-4-5-20251001",
@@ -132,14 +137,16 @@ class HaikuExtractor:
         return result if result.is_relevant else None
 
     async def extract_linkedin_role(
-        self, title: str, snippet: str, role_query: str, target_company: str,
+        self, title: str, snippet: str, role_query: str,
+        target_company: str, target_domain: str,
     ) -> ExtractedLinkedInIncumbent | None:
         from rrxray.services.anthropic_client import AnthropicError
         try:
             response = await self.anthropic.complete_with_cached_system(
                 system_prompt=_LINKEDIN_INCUMBENT_SYSTEM_PROMPT,
                 user_message=(
-                    f"Target company: {target_company}\n\n"
+                    f"Target company: {target_company}\n"
+                    f"Target domain: {target_domain}\n\n"
                     f"Role we were searching for: {role_query}\n\n"
                     f"Title: {title}\n\nSnippet: {snippet}"
                 ),
@@ -158,14 +165,15 @@ class GeminiFlashExtractor:
         self.gemini = gemini
 
     async def extract_exec_change(
-        self, title: str, snippet: str, target_company: str,
+        self, title: str, snippet: str, target_company: str, target_domain: str,
     ) -> ExtractedExecChange | None:
         from rrxray.services.gemini_client import GeminiError
         try:
             response = await self.gemini.complete_structured(
                 system_prompt=_EXEC_CHANGE_SYSTEM_PROMPT,
                 user_message=(
-                    f"Target company: {target_company}\n\n"
+                    f"Target company: {target_company}\n"
+                    f"Target domain: {target_domain}\n\n"
                     f"Title: {title}\n\nSnippet: {snippet}"
                 ),
                 response_schema=ExtractedExecChange,
@@ -178,14 +186,16 @@ class GeminiFlashExtractor:
         return result if result.is_relevant else None
 
     async def extract_linkedin_role(
-        self, title: str, snippet: str, role_query: str, target_company: str,
+        self, title: str, snippet: str, role_query: str,
+        target_company: str, target_domain: str,
     ) -> ExtractedLinkedInIncumbent | None:
         from rrxray.services.gemini_client import GeminiError
         try:
             response = await self.gemini.complete_structured(
                 system_prompt=_LINKEDIN_INCUMBENT_SYSTEM_PROMPT,
                 user_message=(
-                    f"Target company: {target_company}\n\n"
+                    f"Target company: {target_company}\n"
+                    f"Target domain: {target_domain}\n\n"
                     f"Role we were searching for: {role_query}\n\n"
                     f"Title: {title}\n\nSnippet: {snippet}"
                 ),

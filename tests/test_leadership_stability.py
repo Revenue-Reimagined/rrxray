@@ -107,7 +107,7 @@ def test_extract_exec_changes_filters_irrelevant():
         None,  # irrelevant
     ])
 
-    changes = asyncio.run(_extract_exec_changes(results, extractor, "Acme"))
+    changes = asyncio.run(_extract_exec_changes(results, extractor, "Acme", "example.com"))
 
     assert len(changes) == 1
     assert changes[0].name == "Jane Doe"
@@ -126,8 +126,27 @@ def test_extract_exec_changes_handles_extractor_none():
     extractor = MagicMock()
     extractor.extract_exec_change = AsyncMock(side_effect=[None, None])
 
-    changes = asyncio.run(_extract_exec_changes(results, extractor, "Acme"))
+    changes = asyncio.run(_extract_exec_changes(results, extractor, "Acme", "example.com"))
     assert changes == []
+
+
+def test_extract_exec_changes_passes_domain_to_extractor():
+    """Iteration #2: extractor receives target_domain so it can disambiguate
+    common-name companies (e.g., Linear vs Linear Retail).
+    """
+    from rrxray.collectors.leadership_stability import _extract_exec_changes
+    from rrxray.services.firecrawl_client import SearchResult
+
+    results = [SearchResult(url="u1", title="x", description="y")]
+    extractor = MagicMock()
+    extractor.extract_exec_change = AsyncMock(return_value=None)
+
+    asyncio.run(_extract_exec_changes(results, extractor, "Linear", "linear.app"))
+
+    # Confirm extractor.extract_exec_change was called with target_domain
+    call = extractor.extract_exec_change.call_args
+    # Accept either positional or keyword
+    assert "linear.app" in str(call)
 
 
 def test_search_linkedin_incumbents_runs_seven_role_queries(fake_firecrawl):
@@ -193,7 +212,7 @@ def test_extract_current_incumbents_dedupes_by_role_name():
         ExtractedLinkedInIncumbent(name="Jane Doe", role_canonical="cro", role_raw="CRO", is_relevant=True),
     ])
 
-    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor, "Acme"))
+    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor, "Acme", "example.com"))
 
     assert len(incumbents) == 1
     assert incumbents[0].name == "Jane Doe"
@@ -226,7 +245,7 @@ def test_extract_current_incumbents_marks_post_url_low_confidence():
         ExtractedLinkedInIncumbent(name="Bob", role_canonical="cro", role_raw="CRO", is_relevant=True),
     ])
 
-    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor, "Acme"))
+    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor, "Acme", "example.com"))
 
     by_name = {i.name: i for i in incumbents}
     assert by_name["Sara Lee"].confidence == "low"
@@ -260,7 +279,7 @@ def test_extract_current_incumbents_keeps_only_top_match_per_role():
         ExtractedLinkedInIncumbent(name="Second Person", role_canonical="cro", role_raw="CRO", is_relevant=True),
     ])
 
-    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor, "Acme"))
+    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor, "Acme", "example.com"))
 
     assert len(incumbents) == 1
     assert incumbents[0].name == "First Person"
@@ -277,7 +296,7 @@ def test_extract_current_incumbents_drops_irrelevant():
     extractor = MagicMock()
     extractor.extract_linkedin_role = AsyncMock(return_value=None)
 
-    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor, "Acme"))
+    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor, "Acme", "example.com"))
     assert incumbents == []
 
 
