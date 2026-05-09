@@ -450,3 +450,104 @@ def test_render_anonymizes_linkedin_names_preserves_press_names():
     assert "Press Person" in rendered
     assert "LinkedIn Person" not in rendered
     assert "Acme's CMO" in rendered
+
+
+def test_synth_findings_render_in_section_b():
+    """Synthesizer findings on observed_stability_trajectory render in Section B."""
+    from datetime import UTC, datetime
+
+    from rrxray.rendering.markdown import render_internal
+    from rrxray.schemas._shared import Finding, SourceCitation
+    from rrxray.schemas.data import (
+        CollectorOutputs,
+        InputParams,
+        ObservedStabilityTrajectoryNarrative,
+        RunMetadata,
+        SynthesizerOutputs,
+        XrayData,
+    )
+    from rrxray.voice.anonymizer import Anonymizer
+    from rrxray.voice.rr_voice import VoicePostProcessor
+
+    narrative = ObservedStabilityTrajectoryNarrative(
+        narrative_paragraphs=["Stability appears mixed."],
+        findings=[
+            Finding(
+                text="Recent CRO turnover suggests motion redesign in flight.",
+                source=SourceCitation(
+                    url="https://example.com/press/cro",
+                    timestamp=datetime(2026, 5, 1, tzinfo=UTC),
+                ),
+            ),
+        ],
+        gaps=[],
+        discovery_questions=[],
+        model_used="claude-sonnet-4-6",
+        cache_hit=False,
+    )
+
+    data = XrayData(
+        domain="example.com",
+        run_metadata=RunMetadata(
+            timestamp=datetime.now(UTC),
+            tool_version="0.1",
+            modes_built=["internal"],
+            model_used="claude-sonnet-4-6",
+        ),
+        inputs=InputParams(domain="example.com"),
+        collectors=CollectorOutputs(),
+        synthesizers=SynthesizerOutputs(observed_stability_trajectory=narrative),
+    )
+
+    rendered = render_internal(data, Anonymizer(), VoicePostProcessor())
+    # Section B finding text appears in render
+    assert "Recent CRO turnover suggests motion redesign in flight." in rendered
+    # Source URL is linked
+    assert "https://example.com/press/cro" in rendered
+
+
+def test_em_dashes_absent_from_leadership_stability_detail():
+    """Rendered Leadership Stability detail must not contain em-dash characters."""
+    from datetime import UTC, datetime
+
+    from rrxray.rendering.markdown import render_internal
+    from rrxray.schemas.data import (
+        CollectorOutputs,
+        InputParams,
+        RunMetadata,
+        XrayData,
+    )
+    from rrxray.schemas.leadership_stability import (
+        CurrentIncumbent,
+        LeadershipStabilityData,
+    )
+    from rrxray.voice.anonymizer import Anonymizer
+    from rrxray.voice.rr_voice import VoicePostProcessor
+
+    # Minimal data: one incumbent with no linkedin_url (triggers former em-dash placeholder)
+    ls = LeadershipStabilityData(
+        current_incumbents=[
+            CurrentIncumbent(
+                name="x", role_canonical="cro", role_raw="CRO", linkedin_url=None,
+            ),
+        ],
+    )
+    data = XrayData(
+        domain="example.com",
+        run_metadata=RunMetadata(
+            timestamp=datetime.now(UTC),
+            tool_version="0.1",
+            modes_built=["internal"],
+            model_used="claude-sonnet-4-6",
+        ),
+        inputs=InputParams(domain="example.com"),
+        collectors=CollectorOutputs(leadership_stability=ls),
+    )
+
+    rendered = render_internal(data, Anonymizer(), VoicePostProcessor())
+    # Isolate the leadership stability section to avoid false positives from
+    # other parts of the report
+    ls_section = rendered.split("### Leadership Stability", 1)[1]
+    # Drop trailing sections (anything after the next top-level Section header)
+    ls_section = ls_section.split("\n## ", 1)[0]
+    assert "—" not in ls_section

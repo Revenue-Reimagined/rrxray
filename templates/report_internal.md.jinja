@@ -39,6 +39,14 @@
 
 {% endfor %}
 
+{% if data.synthesizers.observed_stability_trajectory.findings %}
+### Findings
+
+{% for f in data.synthesizers.observed_stability_trajectory.findings %}
+- {{ f.text | anonymize }} *(source: [{{ f.source.url }}]({{ f.source.url }}))*
+{% endfor %}
+{% endif %}
+
 {% if data.synthesizers.observed_stability_trajectory.gaps %}
 ### Gaps
 

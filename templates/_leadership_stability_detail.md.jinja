@@ -17,7 +17,7 @@
 | Role | Name | Confidence | LinkedIn |
 |---|---|---|---|
 {% for inc in ls.current_incumbents %}
-| {{ inc.role_canonical }} | {{ inc.name | anonymize }} | {{ inc.confidence }} | {% if inc.linkedin_url %}[link]({{ inc.linkedin_url }}){% else %}—{% endif %} |
+| {{ inc.role_canonical }} | {{ inc.name | anonymize }} | {{ inc.confidence }} | {% if inc.linkedin_url %}[link]({{ inc.linkedin_url }}){% else %}-{% endif %} |
 {% endfor %}
 {% else %}
 None recovered from public sources.
@@ -29,7 +29,7 @@ None recovered from public sources.
 | Role | Action | Name | Date | Source |
 |---|---|---|---|---|
 {% for change in ls.exec_changes %}
-| {{ change.role_canonical }} | {{ change.action }} | {{ change.name | anonymize }} | {{ change.occurred_at or "—" }} | [press]({{ change.press_url }}) |
+| {{ change.role_canonical }} | {{ change.action }} | {{ change.name | anonymize }} | {{ change.occurred_at or "-" }} | [press]({{ change.press_url }}) |
 {% endfor %}
 {% else %}
 No public exec announcements recovered.
@@ -39,7 +39,7 @@ No public exec announcements recovered.
 #### Findings
 
 {% for finding in ls.findings %}
-- {{ finding.text }}
+- {{ finding.text | anonymize | voice_collector }}
 {% endfor %}
 {% endif %}
 
