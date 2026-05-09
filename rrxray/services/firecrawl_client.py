@@ -112,7 +112,18 @@ class FirecrawlClient:
             if hasattr(response, "model_dump"):
                 payload = response.model_dump()
                 if isinstance(payload, dict):
-                    return payload.get("results", payload.get("data", []))
+                    # firecrawl-py v2 SearchData uses bucket-keyed shape:
+                    # {"web": [...], "news": [...], "images": [...]}.
+                    # Buckets that weren't requested are None (not empty list),
+                    # so coerce defensively. Older SDK versions used
+                    # {"results": [...]} or {"data": [...]}; preserve those
+                    # for backwards compat.
+                    merged: list[dict[str, Any]] = []
+                    for key in ("web", "news", "results", "data"):
+                        bucket = payload.get(key)
+                        if isinstance(bucket, list):
+                            merged.extend(bucket)
+                    return merged
                 return []
             if isinstance(response, list):
                 return response

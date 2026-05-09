@@ -123,3 +123,44 @@ def test_search_passes_limit_to_sdk(client, fake_sdk):
     asyncio.run(client.search("test", limit=5))
     args, kwargs = fake_sdk.search.call_args
     assert kwargs.get("limit") == 5 or (len(args) > 1 and args[1] == 5)
+
+
+def test_search_handles_v2_bucket_response(client, fake_sdk):
+    """firecrawl-py v2 SearchData returns {web: [...], news: None|[], images: None|[]}.
+    Our wrapper must merge non-None list buckets, not look for results/data keys.
+    """
+    from unittest.mock import MagicMock
+
+    response = MagicMock()
+    response.model_dump.return_value = {
+        "web": [
+            {"url": "https://example.com/a", "title": "Title A", "description": "Desc A"},
+            {"url": "https://example.com/b", "title": "Title B", "description": "Desc B"},
+        ],
+        "news": None,
+        "images": None,
+    }
+    fake_sdk.search.return_value = response
+
+    results = asyncio.run(client.search("test query"))
+    assert len(results) == 2
+    assert results[0].url == "https://example.com/a"
+    assert results[1].title == "Title B"
+
+
+def test_search_merges_web_and_news_buckets(client, fake_sdk):
+    """When both web and news buckets have results, merge them."""
+    from unittest.mock import MagicMock
+
+    response = MagicMock()
+    response.model_dump.return_value = {
+        "web": [{"url": "u1", "title": "Web1", "description": ""}],
+        "news": [{"url": "u2", "title": "News1", "description": ""}],
+        "images": None,
+    }
+    fake_sdk.search.return_value = response
+
+    results = asyncio.run(client.search("test"))
+    assert len(results) == 2
+    titles = {r.title for r in results}
+    assert titles == {"Web1", "News1"}
