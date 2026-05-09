@@ -8,7 +8,12 @@ import traceback as tb_module
 from datetime import UTC, datetime
 from importlib.metadata import version
 
-from rrxray.collectors import pricing_packaging, revenue_motion, tech_stack
+from rrxray.collectors import (
+    leadership_stability,
+    pricing_packaging,
+    revenue_motion,
+    tech_stack,
+)
 from rrxray.context import CollectorContext, SynthesizerContext
 from rrxray.rendering.markdown import render_internal
 from rrxray.schemas.data import (
@@ -26,15 +31,23 @@ from rrxray.services.extraction import make_extractor
 from rrxray.services.firecrawl_client import FirecrawlClient
 from rrxray.services.gemini_client import GeminiClient
 from rrxray.services.wayback_client import WaybackClient
-from rrxray.synthesizers import observed_gtm_motion
+from rrxray.synthesizers import observed_gtm_motion, observed_stability_trajectory
 from rrxray.voice.anonymizer import Anonymizer
 from rrxray.voice.rr_voice import VoicePostProcessor
 
 log = logging.getLogger("rrxray.pipeline")
 
 # Phase 2 will append to these lists.
-COLLECTORS = [pricing_packaging, tech_stack, revenue_motion]
-SYNTHESIZERS = [observed_gtm_motion]
+COLLECTORS = [
+    pricing_packaging,
+    tech_stack,
+    revenue_motion,
+    leadership_stability,
+]
+SYNTHESIZERS = [
+    observed_gtm_motion,
+    observed_stability_trajectory,
+]
 
 
 def _register_collector_names(anonymizer, name_registrations) -> None:

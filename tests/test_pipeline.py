@@ -30,3 +30,53 @@ def test_pipeline_registers_leadership_stability_name_registrations(tmp_path):
     # Only Jane is whitelisted (press)
     assert "Jane Doe" in anonymizer.whitelisted_names
     assert "Bob Smith" not in anonymizer.whitelisted_names
+
+
+def test_collectors_includes_leadership_stability():
+    from rrxray import pipeline
+
+    names = [c.NAME for c in pipeline.COLLECTORS]
+    assert "leadership_stability" in names
+
+
+def test_synthesizers_includes_observed_stability_trajectory():
+    from rrxray import pipeline
+
+    names = [s.NAME for s in pipeline.SYNTHESIZERS]
+    assert "observed_stability_trajectory" in names
+
+
+def test_data_json_round_trips_with_observed_stability_trajectory():
+    from datetime import UTC, datetime
+
+    from rrxray.schemas.data import (
+        InputParams,
+        ObservedStabilityTrajectoryNarrative,
+        RunMetadata,
+        SynthesizerOutputs,
+        XrayData,
+    )
+
+    data = XrayData(
+        domain="example.com",
+        run_metadata=RunMetadata(
+            timestamp=datetime.now(UTC),
+            tool_version="0.1",
+            modes_built=["internal"],
+            model_used="claude-sonnet-4-6",
+        ),
+        inputs=InputParams(domain="example.com"),
+        synthesizers=SynthesizerOutputs(
+            observed_stability_trajectory=ObservedStabilityTrajectoryNarrative(
+                narrative_paragraphs=["Test paragraph."],
+                model_used="claude-sonnet-4-6",
+                cache_hit=False,
+            ),
+        ),
+    )
+    import json
+
+    restored = XrayData.model_validate(json.loads(data.model_dump_json()))
+    assert restored.synthesizers.observed_stability_trajectory.narrative_paragraphs == [
+        "Test paragraph."
+    ]
