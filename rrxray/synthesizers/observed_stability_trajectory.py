@@ -11,7 +11,7 @@ conditional blocks; the synthesizer body unchanged.
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import UTC, datetime
 from importlib.resources import files
 
 from jinja2 import Environment
@@ -52,7 +52,7 @@ def _load_system_prompt() -> str:
 
 def _build_aggregates(data: LeadershipStabilityData) -> StabilityAggregates:
     """Pre-aggregate LeadershipStabilityData into a name-free structure."""
-    today = date.today()
+    today = datetime.now(UTC).date()
 
     # Seat-change counts
     seat_changes: dict[str, int] = {}

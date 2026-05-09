@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -288,8 +288,8 @@ def _emit_findings(
     findings: list[Finding] = []
     gaps: list[str] = []
     questions: list[str] = []
-    today = date.today()
     now = datetime.now(UTC)
+    today = now.date()
 
     # Rule 1: ≥2 changes in same seat in past 18 months → seat-turnover finding
     seat_counts: dict[str, int] = {}
