@@ -30,9 +30,33 @@
 
 ---
 
-## 3. Section B: Stability and Trajectory Signals
+## 3. Section B: Observed Stability and Trajectory
 
+{% if data.synthesizers.observed_stability_trajectory %}
+
+{% for paragraph in data.synthesizers.observed_stability_trajectory.narrative_paragraphs %}
+{{ paragraph | anonymize }}
+
+{% endfor %}
+
+{% if data.synthesizers.observed_stability_trajectory.gaps %}
+### Gaps
+
+{% for gap in data.synthesizers.observed_stability_trajectory.gaps %}
+- {{ gap }}
+{% endfor %}
+{% endif %}
+
+{% if data.synthesizers.observed_stability_trajectory.discovery_questions %}
+### Discovery questions
+
+{% for q in data.synthesizers.observed_stability_trajectory.discovery_questions %}
+- {{ q }}
+{% endfor %}
+{% endif %}
+{% else %}
 [Module not available for this domain]
+{% endif %}
 
 ---
 
@@ -62,6 +86,12 @@
 ### Revenue Motion
 
 {% include "_revenue_motion_detail.md.jinja" %}
+{% endif %}
+
+{% if data.collectors.leadership_stability %}
+### Leadership Stability
+
+{% include "_leadership_stability_detail.md.jinja" %}
 {% endif %}
 
 ---

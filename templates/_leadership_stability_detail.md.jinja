@@ -1,0 +1,60 @@
+{% set ls = data.collectors.leadership_stability %}
+
+#### Founder tenure
+
+{% if ls.founder_tenure and ls.founder_tenure.inferred_year %}
+- Inferred founding year: {{ ls.founder_tenure.inferred_year }} (source: {{ ls.founder_tenure.source }})
+{% if ls.founder_tenure.raw_evidence %}
+- Evidence: `{{ ls.founder_tenure.raw_evidence }}`
+{% endif %}
+{% else %}
+- Not inferable from public sources.
+{% endif %}
+
+#### Current incumbents (LinkedIn snippet inference)
+
+{% if ls.current_incumbents %}
+| Role | Name | Confidence | LinkedIn |
+|---|---|---|---|
+{% for inc in ls.current_incumbents %}
+| {{ inc.role_canonical }} | {{ inc.name | anonymize }} | {{ inc.confidence }} | {% if inc.linkedin_url %}[link]({{ inc.linkedin_url }}){% else %}—{% endif %} |
+{% endfor %}
+{% else %}
+None recovered from public sources.
+{% endif %}
+
+#### Exec changes (past 18 months, press-release sourced)
+
+{% if ls.exec_changes %}
+| Role | Action | Name | Date | Source |
+|---|---|---|---|---|
+{% for change in ls.exec_changes %}
+| {{ change.role_canonical }} | {{ change.action }} | {{ change.name | anonymize }} | {{ change.occurred_at or "—" }} | [press]({{ change.press_url }}) |
+{% endfor %}
+{% else %}
+No public exec announcements recovered.
+{% endif %}
+
+{% if ls.findings %}
+#### Findings
+
+{% for finding in ls.findings %}
+- {{ finding.text }}
+{% endfor %}
+{% endif %}
+
+{% if ls.gaps %}
+#### Gaps
+
+{% for gap in ls.gaps %}
+- {{ gap }}
+{% endfor %}
+{% endif %}
+
+{% if ls.discovery_questions %}
+#### Discovery questions
+
+{% for q in ls.discovery_questions %}
+- {{ q }}
+{% endfor %}
+{% endif %}

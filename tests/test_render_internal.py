@@ -47,7 +47,7 @@ def test_full_skeleton_present():
         "# GTM X-Ray™:",
         "## 1. Executive Summary",
         "## 2. Section A: Observed GTM Motion",
-        "## 3. Section B: Stability and Trajectory Signals",
+        "## 3. Section B: Observed Stability and Trajectory",
         "## 4. Section C: External Voice vs. Internal Voice",
         "## 5. Module Detail Appendix",
         "## 6. Discovery Questions",
@@ -290,3 +290,163 @@ def test_revenue_motion_module_detail_omits_when_no_collector():
     data = make_data()
     out = render_internal(data, Anonymizer(), VoicePostProcessor())
     assert "### Revenue Motion" not in out
+
+
+def test_leadership_stability_module_detail_renders():
+    """Module Detail Appendix renders Leadership Stability subsection with full data."""
+    from datetime import UTC, date, datetime
+
+    from rrxray.rendering.markdown import render_internal
+    from rrxray.schemas.data import (
+        CollectorOutputs,
+        InputParams,
+        RunMetadata,
+        XrayData,
+    )
+    from rrxray.schemas.leadership_stability import (
+        CurrentIncumbent,
+        ExecAction,
+        ExecChange,
+        FounderTenure,
+        LeadershipStabilityData,
+        NameRegistration,
+    )
+    from rrxray.voice.anonymizer import Anonymizer
+    from rrxray.voice.rr_voice import VoicePostProcessor
+
+    anonymizer = Anonymizer()
+    voice = VoicePostProcessor()
+
+    ls_data = LeadershipStabilityData(
+        exec_changes=[
+            ExecChange(
+                name="Jane Doe", role_canonical="cro", role_raw="CRO",
+                action=ExecAction.HIRE,
+                occurred_at=date(2025, 9, 1),
+                press_url="https://example.com/p/1",
+                press_title="Acme Names Jane Doe as CRO",
+            ),
+        ],
+        current_incumbents=[
+            CurrentIncumbent(name="Jane Doe", role_canonical="cro", role_raw="CRO"),
+            CurrentIncumbent(name="Bob Smith", role_canonical="cmo", role_raw="CMO"),
+        ],
+        founder_tenure=FounderTenure(inferred_year=2018, source="about_page"),
+        name_registrations=[
+            NameRegistration(name="Jane Doe", role_descriptor="Acme's CRO", whitelist=True),
+            NameRegistration(name="Bob Smith", role_descriptor="Acme's CMO", whitelist=False),
+        ],
+    )
+
+    # Apply registrations to anonymizer (mirrors what pipeline does)
+    for reg in ls_data.name_registrations:
+        anonymizer.register_individual(reg.name, reg.role_descriptor)
+        if reg.whitelist:
+            anonymizer.whitelist_from_press(reg.name)
+
+    data = XrayData(
+        domain="example.com",
+        run_metadata=RunMetadata(
+            timestamp=datetime.now(UTC),
+            tool_version="0.1",
+            modes_built=["internal"],
+            model_used="claude-sonnet-4-6",
+        ),
+        inputs=InputParams(domain="example.com"),
+        collectors=CollectorOutputs(leadership_stability=ls_data),
+    )
+
+    rendered = render_internal(data, anonymizer, voice)
+
+    assert "Leadership Stability" in rendered
+    assert "Founder tenure" in rendered
+    assert "Current incumbents" in rendered
+    # Whitelisted name: passes through
+    assert "Jane Doe" in rendered
+    # Non-whitelisted LinkedIn-only name: replaced with role descriptor
+    assert "Bob Smith" not in rendered
+    assert "Acme's CMO" in rendered
+
+
+def test_leadership_stability_module_detail_omits_when_no_collector():
+    """Module Detail Appendix omits Leadership Stability section when collector is None."""
+    from datetime import UTC, datetime
+
+    from rrxray.rendering.markdown import render_internal
+    from rrxray.schemas.data import (
+        CollectorOutputs,
+        InputParams,
+        RunMetadata,
+        XrayData,
+    )
+    from rrxray.voice.anonymizer import Anonymizer
+    from rrxray.voice.rr_voice import VoicePostProcessor
+
+    data = XrayData(
+        domain="example.com",
+        run_metadata=RunMetadata(
+            timestamp=datetime.now(UTC),
+            tool_version="0.1",
+            modes_built=["internal"],
+            model_used="claude-sonnet-4-6",
+        ),
+        inputs=InputParams(domain="example.com"),
+        collectors=CollectorOutputs(),  # no leadership_stability
+    )
+
+    rendered = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "Leadership Stability" not in rendered
+    assert "Founder tenure" not in rendered
+
+
+def test_render_anonymizes_linkedin_names_preserves_press_names():
+    """LinkedIn-only names get replaced; press-whitelisted names pass through."""
+    from datetime import UTC, datetime
+
+    from rrxray.rendering.markdown import render_internal
+    from rrxray.schemas.data import (
+        CollectorOutputs,
+        InputParams,
+        RunMetadata,
+        XrayData,
+    )
+    from rrxray.schemas.leadership_stability import (
+        CurrentIncumbent,
+        LeadershipStabilityData,
+        NameRegistration,
+    )
+    from rrxray.voice.anonymizer import Anonymizer
+    from rrxray.voice.rr_voice import VoicePostProcessor
+
+    anonymizer = Anonymizer()
+    anonymizer.register_individual("Press Person", "Acme's CRO")
+    anonymizer.whitelist_from_press("Press Person")
+    anonymizer.register_individual("LinkedIn Person", "Acme's CMO")
+    # NOT whitelisted
+
+    ls = LeadershipStabilityData(
+        current_incumbents=[
+            CurrentIncumbent(name="Press Person", role_canonical="cro", role_raw="CRO"),
+            CurrentIncumbent(name="LinkedIn Person", role_canonical="cmo", role_raw="CMO"),
+        ],
+        name_registrations=[
+            NameRegistration(name="Press Person", role_descriptor="Acme's CRO", whitelist=True),
+            NameRegistration(name="LinkedIn Person", role_descriptor="Acme's CMO", whitelist=False),
+        ],
+    )
+    data = XrayData(
+        domain="example.com",
+        run_metadata=RunMetadata(
+            timestamp=datetime.now(UTC),
+            tool_version="0.1",
+            modes_built=["internal"],
+            model_used="claude-sonnet-4-6",
+        ),
+        inputs=InputParams(domain="example.com"),
+        collectors=CollectorOutputs(leadership_stability=ls),
+    )
+
+    rendered = render_internal(data, anonymizer, VoicePostProcessor())
+    assert "Press Person" in rendered
+    assert "LinkedIn Person" not in rendered
+    assert "Acme's CMO" in rendered
