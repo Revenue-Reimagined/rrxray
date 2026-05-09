@@ -458,6 +458,43 @@ def test_emit_findings_seat_turnover():
     assert any("turned over" in t.lower() and "cro" in t.lower() for t in finding_texts)
 
 
+def test_emit_findings_seat_turnover_anchors_to_most_recent():
+    """Rule 1 (≥2 changes in same seat) must anchor to the change with the
+    most recent occurred_at, not list-order. Otherwise the source URL on the
+    finding can point to the older event when the collector receives results
+    in arbitrary order."""
+    from datetime import date, timedelta
+
+    from rrxray.collectors.leadership_stability import _emit_findings
+    from rrxray.schemas.leadership_stability import ExecAction, ExecChange, FounderTenure
+
+    today = date.today()
+    older = ExecChange(
+        name="Old Person", role_canonical="cro", role_raw="CRO",
+        action=ExecAction.HIRE,
+        occurred_at=today - timedelta(days=200),
+        press_url="https://example.com/older",
+        press_title="older",
+    )
+    newer = ExecChange(
+        name="New Person", role_canonical="cro", role_raw="CRO",
+        action=ExecAction.HIRE,
+        occurred_at=today - timedelta(days=60),
+        press_url="https://example.com/newer",
+        press_title="newer",
+    )
+    # Older first, newer second — list-order would pick the older URL.
+    findings, _gaps, _questions = _emit_findings(
+        [older, newer], current_incumbents=[], founder_tenure=FounderTenure(),
+    )
+
+    seat_findings = [
+        f for f in findings if "turned over" in f.text.lower()
+    ]
+    assert len(seat_findings) == 1
+    assert seat_findings[0].source.url == "https://example.com/newer"
+
+
 def test_emit_findings_recent_change():
     """1 change in seat within 270 days → in-transition finding."""
     from datetime import date, timedelta

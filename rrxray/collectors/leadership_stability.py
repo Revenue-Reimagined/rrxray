@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -298,8 +298,14 @@ def _emit_findings(
     for role, count in seat_counts.items():
         if count >= 2:
             display = ROLE_DISPLAY.get(role, role)
-            # Anchor to the most recent press URL for that role, if available
-            same_role = [c for c in exec_changes if c.role_canonical == role]
+            # Anchor to the most recent press URL for that role, if available.
+            # Sort by occurred_at descending; treat None as oldest (date.min)
+            # so dated changes win the anchor over undated ones.
+            same_role = sorted(
+                (c for c in exec_changes if c.role_canonical == role),
+                key=lambda c: c.occurred_at or date.min,
+                reverse=True,
+            )
             anchor = same_role[0]
             findings.append(Finding(
                 text=(
