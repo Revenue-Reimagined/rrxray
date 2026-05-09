@@ -21,7 +21,7 @@ from rrxray.collectors._leadership_stability_catalog import RECENT_THRESHOLD_DAY
 from rrxray.context import SynthesizerContext
 from rrxray.schemas._shared import Finding
 from rrxray.schemas.data import ObservedStabilityTrajectoryNarrative
-from rrxray.schemas.leadership_stability import LeadershipStabilityData
+from rrxray.schemas.leadership_stability import ExecAction, LeadershipStabilityData
 
 NAME = "observed_stability_trajectory"
 log = logging.getLogger(f"rrxray.synthesizers.{NAME}")
@@ -77,11 +77,15 @@ def _build_aggregates(data: LeadershipStabilityData) -> StabilityAggregates:
     for inc in data.current_incumbents:
         if inc.confidence != "high":
             continue
-        # tenure: if there's a recent change in this role, use its months_ago
+        # tenure: if there's a recent hire/promotion in this role, use its
+        # months_ago. Departures don't reflect the current incumbent's tenure
+        # so they're filtered out.
         tenure_months = None
         latest_change = max(
             (c for c in data.exec_changes
-             if c.role_canonical == inc.role_canonical and c.occurred_at is not None),
+             if c.role_canonical == inc.role_canonical
+             and c.occurred_at is not None
+             and c.action in {ExecAction.HIRE, ExecAction.PROMOTION}),
             key=lambda c: c.occurred_at,
             default=None,
         )

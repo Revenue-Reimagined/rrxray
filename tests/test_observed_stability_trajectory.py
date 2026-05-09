@@ -96,6 +96,40 @@ def test_build_aggregates_collector_findings_strings():
     assert aggs.collector_findings == ["CRO is in transition; current incumbent in seat ~4 months."]
 
 
+def test_aggregates_tenure_ignores_departures():
+    """Tenure for a current incumbent must be inferred from the latest
+    hire/promotion in that seat, not from a departure (which reflects the
+    prior incumbent leaving)."""
+    from datetime import date, timedelta
+
+    today = date.today()
+    data = LeadershipStabilityData(
+        exec_changes=[
+            # Departure 90 days ago — should be ignored
+            ExecChange(
+                name="Old CRO", role_canonical="cro", role_raw="CRO",
+                action=ExecAction.DEPARTURE,
+                occurred_at=today - timedelta(days=90),
+                press_url="x", press_title="y",
+            ),
+            # Hire 30 days ago — this is the tenure anchor
+            ExecChange(
+                name="New CRO", role_canonical="cro", role_raw="CRO",
+                action=ExecAction.HIRE,
+                occurred_at=today - timedelta(days=30),
+                press_url="x", press_title="y",
+            ),
+        ],
+        current_incumbents=[
+            CurrentIncumbent(name="New CRO", role_canonical="cro", role_raw="CRO", confidence="high"),
+        ],
+        founder_tenure=FounderTenure(),
+    )
+
+    aggs = _build_aggregates(data)
+    assert aggs.current_incumbents_by_role["cro"]["tenure_months"] == 1
+
+
 def test_synth_skips_when_collector_absent():
     """leadership_stability is None → synthesize returns None."""
     from rrxray.config import Config
