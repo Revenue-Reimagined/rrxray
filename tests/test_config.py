@@ -68,3 +68,24 @@ def test_empty_env_var_with_no_dotenv_leaves_key_unset(monkeypatch, tmp_path):
     # Either None or absent; what matters is that empty SecretStr does not slip through
     if c.anthropic_api_key is not None:
         assert c.anthropic_api_key.get_secret_value() != ""
+
+
+def test_extractor_model_default_haiku():
+    from rrxray.config import Config
+    c = Config(domain="example.com")
+    assert c.extractor_model == "haiku"
+
+
+def test_extractor_model_can_be_gemini_flash():
+    from rrxray.config import Config
+    c = Config(domain="example.com", extractor_model="gemini-flash")
+    assert c.extractor_model == "gemini-flash"
+
+
+def test_extractor_model_rejects_invalid():
+    import pytest
+    from pydantic import ValidationError
+
+    from rrxray.config import Config
+    with pytest.raises(ValidationError):
+        Config(domain="example.com", extractor_model="claude-opus")

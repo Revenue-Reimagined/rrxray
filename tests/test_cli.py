@@ -51,3 +51,12 @@ def test_run_dry_run_does_not_call_apis(monkeypatch, tmp_path):
     assert result.exit_code == 0
     assert "Plan" in result.stdout or "plan" in result.stdout
     assert called == []
+
+
+def test_run_command_accepts_extractor_flag():
+    from typer.testing import CliRunner
+
+    from rrxray.cli import app
+    runner = CliRunner()
+    result = runner.invoke(app, ["run", "--domain", "example.com", "--dry-run", "--extractor", "gemini-flash"])
+    assert result.exit_code == 0, result.stdout
