@@ -233,6 +233,39 @@ def test_extract_current_incumbents_marks_post_url_low_confidence():
     assert by_name["Bob"].confidence == "high"
 
 
+def test_extract_current_incumbents_keeps_only_top_match_per_role():
+    """Per spec, only the first relevant extraction for a role becomes the
+    incumbent. Subsequent same-role results with different names are dropped
+    even though the (role, name) dedup key is different."""
+    from rrxray.collectors.leadership_stability import _extract_current_incumbents
+    from rrxray.services.extraction import ExtractedLinkedInIncumbent
+    from rrxray.services.firecrawl_client import SearchResult
+
+    results_by_role = {
+        "cro": [
+            SearchResult(url="https://www.linkedin.com/in/first-cro", title="First CRO", description="..."),
+            SearchResult(url="https://www.linkedin.com/in/second-cro", title="Second CRO", description="..."),
+        ],
+        "cmo": [],
+        "ceo": [],
+        "vp_sales": [],
+        "vp_revenue": [],
+        "vp_marketing": [],
+        "founder": [],
+    }
+
+    extractor = MagicMock()
+    extractor.extract_linkedin_role = AsyncMock(side_effect=[
+        ExtractedLinkedInIncumbent(name="First Person", role_canonical="cro", role_raw="CRO", is_relevant=True),
+        ExtractedLinkedInIncumbent(name="Second Person", role_canonical="cro", role_raw="CRO", is_relevant=True),
+    ])
+
+    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor))
+
+    assert len(incumbents) == 1
+    assert incumbents[0].name == "First Person"
+
+
 def test_extract_current_incumbents_drops_irrelevant():
     from rrxray.collectors.leadership_stability import _extract_current_incumbents
     from rrxray.services.firecrawl_client import SearchResult

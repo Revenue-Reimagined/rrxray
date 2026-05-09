@@ -159,6 +159,11 @@ async def _extract_current_incumbents(
                 linkedin_url=r.url,
                 confidence=_confidence_for_linkedin_url(r.url),  # type: ignore[arg-type]
             ))
+            # Spec: top match per role. The first relevant extraction in the
+            # search-result order becomes the incumbent for this role; later
+            # results in the same role (which can yield distinct names) are
+            # skipped. Same-name dedup across roles still happens via `seen`.
+            break
 
     return incumbents
 
