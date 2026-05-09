@@ -11,15 +11,18 @@ LLM is used in this collector path for press / LinkedIn snippet extraction
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from rrxray.collectors._leadership_stability_catalog import (
+    FOUNDED_YEAR_PATTERNS,
     LEADERSHIP_ROLES,
     PRESS_ACTION_QUERIES,
 )
 from rrxray.schemas.leadership_stability import (
     CurrentIncumbent,
     ExecChange,
+    FounderTenure,
     LeadershipStabilityData,
 )
 
@@ -27,6 +30,7 @@ if TYPE_CHECKING:
     from rrxray.context import CollectorContext
     from rrxray.services.extraction import GeminiFlashExtractor, HaikuExtractor
     from rrxray.services.firecrawl_client import FirecrawlClient, SearchResult
+    from rrxray.services.wayback_client import WaybackClient
 
 
 NAME = "leadership_stability"
@@ -152,6 +156,72 @@ async def _extract_current_incumbents(
     return incumbents
 
 
+def _parse_founding_year_from_about(html: str) -> tuple[int, str] | None:
+    """Returns (year, raw_evidence_quote) on first match; None if no pattern matches."""
+    text = re.sub(r"<[^>]+>", " ", html)  # strip tags crudely
+    for pattern in FOUNDED_YEAR_PATTERNS:
+        m = re.search(pattern, text, re.IGNORECASE)
+        if m:
+            year = int(m.group(1))
+            # Capture a small surrounding quote for evidence
+            start = max(0, m.start() - 20)
+            end = min(len(text), m.end() + 20)
+            quote = text[start:end].strip()
+            return year, quote
+    return None
+
+
+async def _infer_founder_tenure(
+    firecrawl: FirecrawlClient,
+    wayback: WaybackClient,
+    domain: str,
+) -> FounderTenure:
+    """F1: scrape /about, regex for founding year. F2 fallback: Wayback oldest snapshot.
+
+    Returns FounderTenure(source='unknown') if both fail.
+    """
+    from rrxray.services.firecrawl_client import FirecrawlError
+
+    # F1: try /about
+    about_url = f"https://{domain}/about"
+    try:
+        page = await firecrawl.scrape_url(about_url, only_main_content=True)
+    except FirecrawlError as e:
+        log.warning("about page scrape failed: %s", e)
+        page = None
+
+    if page is not None:
+        parsed = _parse_founding_year_from_about(page.html or page.markdown or "")
+        if parsed is not None:
+            year, evidence = parsed
+            return FounderTenure(
+                inferred_year=year,
+                source="about_page",
+                raw_evidence=evidence,
+            )
+
+    # F2: Wayback fallback — oldest reachable homepage snapshot
+    try:
+        snapshots = await wayback.snapshots(
+            f"https://{domain}",
+            interval_months=12,
+            span_months=120,  # 10 years
+        )
+    except Exception as e:  # WaybackError or transient
+        log.warning("wayback snapshots failed: %s", e)
+        snapshots = []
+
+    if snapshots:
+        oldest = min(snapshots, key=lambda s: s.timestamp)
+        return FounderTenure(
+            inferred_year=oldest.timestamp.year,
+            source="wayback_homepage",
+            raw_evidence=f"Oldest reachable Wayback snapshot: {oldest.archive_url}",
+        )
+
+    return FounderTenure(source="unknown")
+
+
 async def collect(ctx: CollectorContext) -> LeadershipStabilityData:
     """Orchestrator. Phase 2.2 T7-T11 incrementally fills this in."""
     company = ctx.company_name or ctx.domain.split(".")[0].title()
@@ -166,8 +236,11 @@ async def collect(ctx: CollectorContext) -> LeadershipStabilityData:
     linkedin_results = await _search_linkedin_incumbents(ctx.firecrawl, company)
     current_incumbents = await _extract_current_incumbents(linkedin_results, ctx.extractor)
 
-    # T9-T11 fill in the rest
+    founder_tenure = await _infer_founder_tenure(ctx.firecrawl, ctx.wayback, ctx.domain)
+
+    # T10-T11 fill in the rest
     return LeadershipStabilityData(
         exec_changes=exec_changes,
         current_incumbents=current_incumbents,
+        founder_tenure=founder_tenure,
     )

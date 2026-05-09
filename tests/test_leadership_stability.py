@@ -246,3 +246,100 @@ def test_extract_current_incumbents_drops_irrelevant():
 
     incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor))
     assert incumbents == []
+
+
+def test_infer_founder_tenure_about_page_path(fake_firecrawl):
+    """F1 path: /about page with 'Founded in YYYY' -> FounderTenure(source='about_page')."""
+    from rrxray.collectors.leadership_stability import _infer_founder_tenure
+    from rrxray.services.firecrawl_client import ScrapedPage
+
+    about_html = (FIXTURES / "about_page_with_founding_year.html").read_text()
+    fake_firecrawl.scrape_url = AsyncMock(return_value=ScrapedPage(
+        url="https://acme.com/about", html=about_html, markdown=about_html,
+    ))
+
+    fake_wayback = MagicMock()
+    fake_wayback.snapshots = AsyncMock()  # should not be called
+
+    tenure = asyncio.run(_infer_founder_tenure(fake_firecrawl, fake_wayback, "acme.com"))
+
+    assert tenure.inferred_year == 2018
+    assert tenure.source == "about_page"
+    assert tenure.raw_evidence is not None
+    fake_wayback.snapshots.assert_not_called()
+
+
+def test_infer_founder_tenure_wayback_fallback(fake_firecrawl):
+    """F1 yields no year -> F2 (Wayback oldest snapshot) provides year."""
+    from datetime import UTC, datetime
+
+    from rrxray.collectors.leadership_stability import _infer_founder_tenure
+    from rrxray.services.firecrawl_client import ScrapedPage
+    from rrxray.services.wayback_client import Snapshot
+
+    about_html = (FIXTURES / "about_page_no_founding_year.html").read_text()
+    fake_firecrawl.scrape_url = AsyncMock(return_value=ScrapedPage(
+        url="https://acme.com/about", html=about_html, markdown=about_html,
+    ))
+
+    fake_wayback = MagicMock()
+    fake_wayback.snapshots = AsyncMock(return_value=[
+        Snapshot(
+            timestamp=datetime(2020, 6, 1, tzinfo=UTC),
+            archive_url="https://web.archive.org/web/20200601000000/https://acme.com",
+            html="<html>...</html>",
+            markdown="...",
+        ),
+        Snapshot(
+            timestamp=datetime(2014, 6, 1, tzinfo=UTC),
+            archive_url="https://web.archive.org/web/20140601000000/https://acme.com",
+            html="<html>...</html>",
+            markdown="...",
+        ),
+    ])
+
+    tenure = asyncio.run(_infer_founder_tenure(fake_firecrawl, fake_wayback, "acme.com"))
+
+    assert tenure.inferred_year == 2014
+    assert tenure.source == "wayback_homepage"
+
+
+def test_infer_founder_tenure_unknown(fake_firecrawl):
+    """Both F1 and F2 fail -> source='unknown'."""
+    from rrxray.collectors.leadership_stability import _infer_founder_tenure
+    from rrxray.services.firecrawl_client import FirecrawlError
+
+    fake_firecrawl.scrape_url = AsyncMock(side_effect=FirecrawlError("about page unreachable"))
+
+    fake_wayback = MagicMock()
+    fake_wayback.snapshots = AsyncMock(return_value=[])
+
+    tenure = asyncio.run(_infer_founder_tenure(fake_firecrawl, fake_wayback, "acme.com"))
+
+    assert tenure.inferred_year is None
+    assert tenure.source == "unknown"
+
+
+def test_infer_founder_tenure_about_page_failure_falls_through(fake_firecrawl):
+    """Firecrawl error on /about -> still tries Wayback fallback."""
+    from datetime import UTC, datetime
+
+    from rrxray.collectors.leadership_stability import _infer_founder_tenure
+    from rrxray.services.firecrawl_client import FirecrawlError
+    from rrxray.services.wayback_client import Snapshot
+
+    fake_firecrawl.scrape_url = AsyncMock(side_effect=FirecrawlError("about unreachable"))
+
+    fake_wayback = MagicMock()
+    fake_wayback.snapshots = AsyncMock(return_value=[
+        Snapshot(
+            timestamp=datetime(2016, 1, 1, tzinfo=UTC),
+            archive_url="https://web.archive.org/web/20160101000000/https://acme.com",
+            html="x", markdown="y",
+        ),
+    ])
+
+    tenure = asyncio.run(_infer_founder_tenure(fake_firecrawl, fake_wayback, "acme.com"))
+
+    assert tenure.source == "wayback_homepage"
+    assert tenure.inferred_year == 2016
