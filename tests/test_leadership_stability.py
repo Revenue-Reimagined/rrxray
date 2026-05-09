@@ -128,3 +128,121 @@ def test_extract_exec_changes_handles_extractor_none():
 
     changes = asyncio.run(_extract_exec_changes(results, extractor))
     assert changes == []
+
+
+def test_search_linkedin_incumbents_runs_seven_role_queries(fake_firecrawl):
+    from rrxray.collectors.leadership_stability import _search_linkedin_incumbents
+
+    # LEADERSHIP_ROLES order: ceo, cro, vp_sales, vp_revenue, cmo, vp_marketing, founder
+    fake_firecrawl.search.side_effect = [
+        _make_search_results(_load_search_response("linkedin_empty_response.json")),  # ceo
+        _make_search_results(_load_search_response("linkedin_cro_response.json")),    # cro
+        _make_search_results(_load_search_response("linkedin_empty_response.json")),  # vp_sales
+        _make_search_results(_load_search_response("linkedin_empty_response.json")),  # vp_revenue
+        _make_search_results(_load_search_response("linkedin_cmo_response.json")),    # cmo
+        _make_search_results(_load_search_response("linkedin_empty_response.json")),  # vp_marketing
+        _make_search_results(_load_search_response("linkedin_empty_response.json")),  # founder
+    ]
+
+    results_by_role = asyncio.run(_search_linkedin_incumbents(fake_firecrawl, company="Acme"))
+
+    assert fake_firecrawl.search.call_count == 7
+    assert set(results_by_role.keys()) == {"ceo", "cro", "vp_sales", "vp_revenue", "cmo", "vp_marketing", "founder"}
+    assert len(results_by_role["cro"]) == 2  # CRO fixture had 2 results
+    assert len(results_by_role["cmo"]) == 1
+
+
+def test_search_linkedin_incumbents_handles_per_role_failure(fake_firecrawl):
+    from rrxray.collectors.leadership_stability import _search_linkedin_incumbents
+    from rrxray.services.firecrawl_client import FirecrawlError
+
+    # First role (ceo) fails; rest return empty
+    fake_firecrawl.search.side_effect = [
+        FirecrawlError("simulated"),
+    ] + [_make_search_results([])] * 6
+
+    results_by_role = asyncio.run(_search_linkedin_incumbents(fake_firecrawl, company="Acme"))
+
+    # Failed role gets empty list, not missing key
+    assert results_by_role["ceo"] == []
+    assert fake_firecrawl.search.call_count == 7
+
+
+def test_extract_current_incumbents_dedupes_by_role_name():
+    """Same (role, name) returned by LinkedIn search across queries: one record."""
+    from rrxray.collectors.leadership_stability import _extract_current_incumbents
+    from rrxray.services.extraction import ExtractedLinkedInIncumbent
+    from rrxray.services.firecrawl_client import SearchResult
+
+    results_by_role = {
+        "cro": [
+            SearchResult(url="https://www.linkedin.com/in/jane-doe-1", title="Jane Doe CRO", description="..."),
+            SearchResult(url="https://www.linkedin.com/in/jane-doe-2", title="Jane Doe CRO", description="..."),
+        ],
+        "cmo": [],
+        "ceo": [],
+        "vp_sales": [],
+        "vp_revenue": [],
+        "vp_marketing": [],
+        "founder": [],
+    }
+
+    extractor = MagicMock()
+    extractor.extract_linkedin_role = AsyncMock(side_effect=[
+        ExtractedLinkedInIncumbent(name="Jane Doe", role_canonical="cro", role_raw="CRO", is_relevant=True),
+        ExtractedLinkedInIncumbent(name="Jane Doe", role_canonical="cro", role_raw="CRO", is_relevant=True),
+    ])
+
+    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor))
+
+    assert len(incumbents) == 1
+    assert incumbents[0].name == "Jane Doe"
+    assert incumbents[0].role_canonical == "cro"
+
+
+def test_extract_current_incumbents_marks_post_url_low_confidence():
+    """LinkedIn /posts/ URL gets confidence='low'; /in/ URL gets confidence='high'."""
+    from rrxray.collectors.leadership_stability import _extract_current_incumbents
+    from rrxray.services.extraction import ExtractedLinkedInIncumbent
+    from rrxray.services.firecrawl_client import SearchResult
+
+    results_by_role = {
+        "cmo": [
+            SearchResult(url="https://www.linkedin.com/posts/sara-lee_cmo-acme-activity-12345", title="Sara Lee CMO", description="..."),
+        ],
+        "cro": [
+            SearchResult(url="https://www.linkedin.com/in/bob-cro", title="Bob CRO", description="..."),
+        ],
+        "ceo": [],
+        "vp_sales": [],
+        "vp_revenue": [],
+        "vp_marketing": [],
+        "founder": [],
+    }
+
+    extractor = MagicMock()
+    extractor.extract_linkedin_role = AsyncMock(side_effect=[
+        ExtractedLinkedInIncumbent(name="Sara Lee", role_canonical="cmo", role_raw="CMO", is_relevant=True),
+        ExtractedLinkedInIncumbent(name="Bob", role_canonical="cro", role_raw="CRO", is_relevant=True),
+    ])
+
+    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor))
+
+    by_name = {i.name: i for i in incumbents}
+    assert by_name["Sara Lee"].confidence == "low"
+    assert by_name["Bob"].confidence == "high"
+
+
+def test_extract_current_incumbents_drops_irrelevant():
+    from rrxray.collectors.leadership_stability import _extract_current_incumbents
+    from rrxray.services.firecrawl_client import SearchResult
+
+    results_by_role = {
+        "cro": [SearchResult(url="https://www.linkedin.com/in/x", title="x", description="y")],
+        "ceo": [], "cmo": [], "vp_sales": [], "vp_revenue": [], "vp_marketing": [], "founder": [],
+    }
+    extractor = MagicMock()
+    extractor.extract_linkedin_role = AsyncMock(return_value=None)
+
+    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor))
+    assert incumbents == []
