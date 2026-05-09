@@ -46,6 +46,7 @@ class CollectorOutputs(BaseModel):
     pricing_packaging: "PricingPackagingData | None" = None  # forward ref
     tech_stack: "TechStackData | None" = None  # forward ref
     revenue_motion: "RevenueMotionData | None" = None  # forward ref
+    leadership_stability: "LeadershipStabilityData | None" = None  # forward ref
 
 
 class ObservedGtmMotionNarrative(BaseModel):
@@ -58,9 +59,19 @@ class ObservedGtmMotionNarrative(BaseModel):
     cache_hit: bool
 
 
+class ObservedStabilityTrajectoryNarrative(BaseModel):
+    narrative_paragraphs: list[str]
+    findings: list[Finding] = []
+    gaps: list[str] = []
+    discovery_questions: list[str] = []
+    model_used: str
+    cache_hit: bool
+
+
 class SynthesizerOutputs(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
     observed_gtm_motion: ObservedGtmMotionNarrative | None = None
+    observed_stability_trajectory: ObservedStabilityTrajectoryNarrative | None = None
 
 
 class XrayData(BaseModel):
@@ -77,6 +88,7 @@ class XrayData(BaseModel):
 
 
 # Resolve forward references
+from rrxray.schemas.leadership_stability import LeadershipStabilityData  # noqa: E402
 from rrxray.schemas.pricing_packaging import PricingPackagingData  # noqa: E402
 from rrxray.schemas.revenue_motion import RevenueMotionData  # noqa: E402
 from rrxray.schemas.tech_stack import TechStackData  # noqa: E402
