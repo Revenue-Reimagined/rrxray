@@ -558,3 +558,246 @@ def test_emit_findings_total_signal_loss():
 
     finding_texts = [f.text for f in findings]
     assert any("not recovered" in t.lower() or "discovery" in t.lower() for t in finding_texts)
+
+
+def test_collect_writes_evidence(tmp_path):
+    """All four evidence files written under evidence/leadership_stability/."""
+    from rrxray.collectors.leadership_stability import collect
+    from rrxray.config import Config
+    from rrxray.context import CollectorContext
+    from rrxray.services.extraction import ExecAction, ExtractedExecChange
+    from rrxray.services.firecrawl_client import ScrapedPage, SearchResult
+
+    fake_firecrawl = MagicMock()
+    fake_firecrawl.search = AsyncMock(side_effect=[
+        # press hires/departures/promotions
+        [SearchResult(url="u1", title="Acme Names Jane Doe as CRO", description="...")],
+        [],
+        [],
+        # 7 LinkedIn role queries
+        [SearchResult(url="https://www.linkedin.com/in/jane-doe", title="Jane CRO", description="...")],
+        [], [], [], [], [], [],
+    ])
+    fake_firecrawl.scrape_url = AsyncMock(return_value=ScrapedPage(
+        url="https://example.com/about",
+        html="<html>Founded in 2018</html>",
+        markdown="Founded in 2018",
+    ))
+
+    fake_wayback = MagicMock()
+    fake_wayback.snapshots = AsyncMock(return_value=[])
+
+    fake_extractor = MagicMock()
+    fake_extractor.extract_exec_change = AsyncMock(return_value=ExtractedExecChange(
+        name="Jane Doe", role_canonical="cro", role_raw="CRO",
+        action=ExecAction.HIRE, is_relevant=True,
+    ))
+    from rrxray.services.extraction import ExtractedLinkedInIncumbent
+    fake_extractor.extract_linkedin_role = AsyncMock(return_value=ExtractedLinkedInIncumbent(
+        name="Jane Doe", role_canonical="cro", role_raw="CRO", is_relevant=True,
+    ))
+
+    config = Config(domain="example.com")
+    ctx = CollectorContext(
+        domain="example.com",
+        company_name="Acme",
+        firecrawl=fake_firecrawl,
+        wayback=fake_wayback,
+        evidence_dir=tmp_path,
+        config=config,
+        extractor=fake_extractor,
+    )
+
+    asyncio.run(collect(ctx))
+
+    evidence_dir = tmp_path / "leadership_stability"
+    assert evidence_dir.exists()
+    assert (evidence_dir / "press_search.json").exists()
+    assert (evidence_dir / "linkedin_search.json").exists()
+    assert (evidence_dir / "exec_changes.json").exists()
+    assert (evidence_dir / "current_incumbents.json").exists()
+
+
+def test_collect_returns_full_happy_path(tmp_path):
+    """All paths populated → fully populated LeadershipStabilityData."""
+    from rrxray.collectors.leadership_stability import collect
+    from rrxray.config import Config
+    from rrxray.context import CollectorContext
+    from rrxray.services.extraction import (
+        ExecAction,
+        ExtractedExecChange,
+        ExtractedLinkedInIncumbent,
+    )
+    from rrxray.services.firecrawl_client import ScrapedPage, SearchResult
+
+    fake_firecrawl = MagicMock()
+    fake_firecrawl.search = AsyncMock(side_effect=[
+        [SearchResult(url="https://example.com/p/1", title="Acme Names Jane Doe as CRO", description="...")],
+        [],
+        [],
+        [SearchResult(url="https://www.linkedin.com/in/jane-doe", title="Jane CRO", description="...")],
+        [], [], [], [], [], [],
+    ])
+    fake_firecrawl.scrape_url = AsyncMock(return_value=ScrapedPage(
+        url="https://example.com/about", html="<p>Founded in 2018</p>", markdown="Founded in 2018",
+    ))
+    fake_wayback = MagicMock()
+    fake_wayback.snapshots = AsyncMock(return_value=[])
+
+    fake_extractor = MagicMock()
+    fake_extractor.extract_exec_change = AsyncMock(return_value=ExtractedExecChange(
+        name="Jane Doe", role_canonical="cro", role_raw="CRO",
+        action=ExecAction.HIRE, is_relevant=True,
+    ))
+    fake_extractor.extract_linkedin_role = AsyncMock(return_value=ExtractedLinkedInIncumbent(
+        name="Jane Doe", role_canonical="cro", role_raw="CRO", is_relevant=True,
+    ))
+
+    ctx = CollectorContext(
+        domain="example.com", company_name="Acme",
+        firecrawl=fake_firecrawl, wayback=fake_wayback,
+        evidence_dir=tmp_path, config=Config(domain="example.com"),
+        extractor=fake_extractor,
+    )
+    data = asyncio.run(collect(ctx))
+
+    assert len(data.exec_changes) == 1
+    assert data.exec_changes[0].name == "Jane Doe"
+    assert len(data.current_incumbents) == 1
+    assert data.founder_tenure.inferred_year == 2018
+    assert len(data.name_registrations) == 1
+    assert data.name_registrations[0].whitelist is True  # press takes precedence
+
+
+def test_collect_handles_total_failure(tmp_path):
+    """All Firecrawl calls fail; collector returns LeadershipStabilityData with signal-loss finding."""
+    from rrxray.collectors.leadership_stability import collect
+    from rrxray.config import Config
+    from rrxray.context import CollectorContext
+    from rrxray.services.firecrawl_client import FirecrawlError
+
+    fake_firecrawl = MagicMock()
+    fake_firecrawl.search = AsyncMock(side_effect=FirecrawlError("simulated"))
+    fake_firecrawl.scrape_url = AsyncMock(side_effect=FirecrawlError("simulated"))
+
+    fake_wayback = MagicMock()
+    fake_wayback.snapshots = AsyncMock(return_value=[])
+
+    fake_extractor = MagicMock()
+    # Should never be called since search returned no results, but provide stubs
+    fake_extractor.extract_exec_change = AsyncMock(return_value=None)
+    fake_extractor.extract_linkedin_role = AsyncMock(return_value=None)
+
+    ctx = CollectorContext(
+        domain="example.com", company_name="Acme",
+        firecrawl=fake_firecrawl, wayback=fake_wayback,
+        evidence_dir=tmp_path, config=Config(domain="example.com"),
+        extractor=fake_extractor,
+    )
+    data = asyncio.run(collect(ctx))
+
+    # Graceful: no exception, finding emitted
+    assert data.exec_changes == []
+    assert data.current_incumbents == []
+    assert data.founder_tenure.source == "unknown"
+    finding_texts = [f.text for f in data.findings]
+    assert any("not recovered" in t.lower() for t in finding_texts)
+
+
+def test_collect_handles_press_search_failure_only(tmp_path):
+    """Press search fails entirely; LinkedIn + founder still work."""
+    from rrxray.collectors.leadership_stability import collect
+    from rrxray.config import Config
+    from rrxray.context import CollectorContext
+    from rrxray.services.extraction import ExtractedLinkedInIncumbent
+    from rrxray.services.firecrawl_client import FirecrawlError, ScrapedPage, SearchResult
+
+    fake_firecrawl = MagicMock()
+    # First 3 calls (press hires/departures/promotions) all fail
+    # Next 7 (LinkedIn) return one CRO result
+    fake_firecrawl.search = AsyncMock(side_effect=[
+        FirecrawlError("simulated press failure"),
+        FirecrawlError("simulated press failure"),
+        FirecrawlError("simulated press failure"),
+        [SearchResult(url="https://www.linkedin.com/in/jane", title="Jane CRO", description="...")],
+        [], [], [], [], [], [],
+    ])
+    fake_firecrawl.scrape_url = AsyncMock(return_value=ScrapedPage(
+        url="https://example.com/about", html="<p>Founded in 2018</p>", markdown="Founded in 2018",
+    ))
+    fake_wayback = MagicMock()
+    fake_wayback.snapshots = AsyncMock(return_value=[])
+
+    fake_extractor = MagicMock()
+    fake_extractor.extract_exec_change = AsyncMock(return_value=None)
+    fake_extractor.extract_linkedin_role = AsyncMock(return_value=ExtractedLinkedInIncumbent(
+        name="Jane", role_canonical="cro", role_raw="CRO", is_relevant=True,
+    ))
+
+    ctx = CollectorContext(
+        domain="example.com", company_name="Acme",
+        firecrawl=fake_firecrawl, wayback=fake_wayback,
+        evidence_dir=tmp_path, config=Config(domain="example.com"),
+        extractor=fake_extractor,
+    )
+    data = asyncio.run(collect(ctx))
+
+    # Press path silent; LinkedIn + founder populated
+    assert data.exec_changes == []
+    assert len(data.current_incumbents) == 1
+    assert data.founder_tenure.inferred_year == 2018
+
+
+def test_collect_excludes_names_from_synthesizer_visible_data(tmp_path):
+    """Defense-in-depth: confirm collector output keeps names confined to expected fields."""
+    from rrxray.collectors.leadership_stability import collect
+    from rrxray.config import Config
+    from rrxray.context import CollectorContext
+    from rrxray.services.extraction import (
+        ExecAction,
+        ExtractedExecChange,
+        ExtractedLinkedInIncumbent,
+    )
+    from rrxray.services.firecrawl_client import ScrapedPage, SearchResult
+
+    fake_firecrawl = MagicMock()
+    fake_firecrawl.search = AsyncMock(side_effect=[
+        [SearchResult(url="u1", title="Acme Names Jane Doe as CRO", description="...")],
+        [],
+        [],
+        [SearchResult(url="https://www.linkedin.com/in/jane", title="Jane CRO", description="...")],
+        [], [], [], [], [], [],
+    ])
+    fake_firecrawl.scrape_url = AsyncMock(return_value=ScrapedPage(
+        url="https://example.com/about", html="<p>Founded in 2018</p>", markdown="...",
+    ))
+    fake_wayback = MagicMock()
+    fake_wayback.snapshots = AsyncMock(return_value=[])
+
+    fake_extractor = MagicMock()
+    fake_extractor.extract_exec_change = AsyncMock(return_value=ExtractedExecChange(
+        name="Jane Doe", role_canonical="cro", role_raw="CRO",
+        action=ExecAction.HIRE, is_relevant=True,
+    ))
+    fake_extractor.extract_linkedin_role = AsyncMock(return_value=ExtractedLinkedInIncumbent(
+        name="Jane Doe", role_canonical="cro", role_raw="CRO", is_relevant=True,
+    ))
+
+    ctx = CollectorContext(
+        domain="example.com", company_name="Acme",
+        firecrawl=fake_firecrawl, wayback=fake_wayback,
+        evidence_dir=tmp_path, config=Config(domain="example.com"),
+        extractor=fake_extractor,
+    )
+    data = asyncio.run(collect(ctx))
+
+    # Names appear in expected fields only
+    assert data.exec_changes[0].name == "Jane Doe"
+    assert data.current_incumbents[0].name == "Jane Doe"
+    assert data.name_registrations[0].name == "Jane Doe"
+
+    # Names should NOT leak into findings text (those are collector-emitted strings)
+    for finding in data.findings:
+        assert "Jane Doe" not in finding.text, f"Name leaked into finding: {finding.text!r}"
+    for q in data.discovery_questions:
+        assert "Jane Doe" not in q

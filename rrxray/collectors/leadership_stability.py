@@ -10,9 +10,11 @@ LLM is used in this collector path for press / LinkedIn snippet extraction
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rrxray.collectors._leadership_stability_catalog import (
@@ -398,26 +400,86 @@ def _emit_findings(
     return findings, gaps, questions
 
 
-async def collect(ctx: CollectorContext) -> LeadershipStabilityData:
-    """Orchestrator. Phase 2.2 T7-T11 incrementally fills this in."""
-    company = ctx.company_name or ctx.domain.split(".")[0].title()
-    if ctx.extractor is None:
-        return LeadershipStabilityData()
+def _write_evidence(
+    evidence_dir: Path,
+    press_results: list[SearchResult],
+    linkedin_results_by_role: dict[str, list[SearchResult]],
+    exec_changes: list[ExecChange],
+    current_incumbents: list[CurrentIncumbent],
+) -> None:
+    """Write evidence files under evidence_dir/leadership_stability/."""
+    out_dir = evidence_dir / "leadership_stability"
+    out_dir.mkdir(parents=True, exist_ok=True)
 
+    (out_dir / "press_search.json").write_text(
+        json.dumps([r.model_dump() for r in press_results], indent=2)
+    )
+    (out_dir / "linkedin_search.json").write_text(
+        json.dumps(
+            {
+                role: [r.model_dump() for r in results]
+                for role, results in linkedin_results_by_role.items()
+            },
+            indent=2,
+        )
+    )
+    (out_dir / "exec_changes.json").write_text(
+        json.dumps([c.model_dump(mode="json") for c in exec_changes], indent=2)
+    )
+    (out_dir / "current_incumbents.json").write_text(
+        json.dumps([i.model_dump() for i in current_incumbents], indent=2)
+    )
+
+
+async def collect(ctx: CollectorContext) -> LeadershipStabilityData:
+    """Orchestrator. Runs press + LinkedIn + founder paths in sequence;
+    each handles its own errors gracefully. Returns a fully-validated
+    LeadershipStabilityData with name_registrations populated for the
+    pipeline's anonymizer registration loop.
+    """
+    company = ctx.company_name or ctx.domain.split(".")[0].title()
+
+    if ctx.extractor is None:
+        log.warning("leadership_stability: no extractor on context; returning empty data")
+        return LeadershipStabilityData(
+            findings=[Finding(
+                text="Leadership stability collector skipped: no extractor configured.",
+                source=_internal_source("config"),
+            )],
+        )
+
+    # Press path
     press_results = await _search_press_releases(ctx.firecrawl, company)
     exec_changes = await _extract_exec_changes(press_results, ctx.extractor)
 
-    linkedin_results = await _search_linkedin_incumbents(ctx.firecrawl, company)
-    current_incumbents = await _extract_current_incumbents(linkedin_results, ctx.extractor)
+    # LinkedIn path
+    linkedin_results_by_role = await _search_linkedin_incumbents(ctx.firecrawl, company)
+    current_incumbents = await _extract_current_incumbents(
+        linkedin_results_by_role, ctx.extractor,
+    )
 
+    # Founder tenure path
     founder_tenure = await _infer_founder_tenure(ctx.firecrawl, ctx.wayback, ctx.domain)
 
+    # Build derived data
     name_registrations = _build_name_registrations(
         exec_changes, current_incumbents, company,
     )
     findings, gaps, questions = _emit_findings(
         exec_changes, current_incumbents, founder_tenure,
     )
+
+    # Write evidence
+    try:
+        _write_evidence(
+            ctx.evidence_dir,
+            press_results,
+            linkedin_results_by_role,
+            exec_changes,
+            current_incumbents,
+        )
+    except OSError as e:
+        log.warning("evidence write failed: %s", e)
 
     return LeadershipStabilityData(
         exec_changes=exec_changes,
