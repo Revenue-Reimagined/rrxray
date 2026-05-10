@@ -8,14 +8,16 @@ You will receive aggregated leadership data — counts and tenures, never names.
 
 ## Aggregated leadership signals
 
-**Seat changes (past 18 months):**
+**Seat changes (with derived timeframe):**
 {% if aggregates.seat_changes %}
 {% for role, count in aggregates.seat_changes.items() %}
-- {{ role }}: {{ count }} change(s)
+- {{ role }}: {{ count }} change(s){% if aggregates.seat_change_ages_months[role] is not none %}, last change ~{{ aggregates.seat_change_ages_months[role] }} months ago{% else %}, timeframe undatable{% endif %}
 {% endfor %}
 {% else %}
 - No exec-change records recovered.
 {% endif %}
+
+**Important:** Use the "last change ~N months ago" figure as the AUTHORITATIVE timeframe when describing when changes happened. Do not infer or estimate timeframe brackets when an explicit number is provided. Note that "N months ago" can exceed 18 — search results sometimes return older changes; the explicit number is correct, regardless of whether the lookback window was 18 months.
 
 **Recent changes (within 9 months):**
 {% if aggregates.recent_changes %}

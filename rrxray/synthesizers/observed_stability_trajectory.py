@@ -30,6 +30,7 @@ log = logging.getLogger(f"rrxray.synthesizers.{NAME}")
 class StabilityAggregates(BaseModel):
     """Name-free pre-aggregation passed to the prompt template."""
     seat_changes: dict[str, int]
+    seat_change_ages_months: dict[str, int | None]  # last change months ago, or None if undatable
     recent_changes: list[dict]
     current_incumbents_by_role: dict[str, dict]
     founder_present_in_ceo_seat: bool
@@ -109,8 +110,32 @@ def _build_aggregates(data: LeadershipStabilityData) -> StabilityAggregates:
     all_roles = ["ceo", "cro", "vp_sales", "vp_revenue", "cmo", "vp_marketing", "founder"]
     seats_with_no_change = [r for r in all_roles if r not in seat_changes]
 
+    # For each seat that has a change, compute "months ago" of the latest change.
+    # Prefer the explicit press date when available; fall back to current
+    # incumbent's tenure_months when there's exactly one change in that seat
+    # (the change is, by definition, the one that produced the incumbent).
+    seat_change_ages: dict[str, int | None] = {}
+    for role in seat_changes:
+        latest_dated = max(
+            (c for c in data.exec_changes
+             if c.role_canonical == role and c.occurred_at is not None),
+            key=lambda c: c.occurred_at,
+            default=None,
+        )
+        if latest_dated is not None and latest_dated.occurred_at is not None:
+            seat_change_ages[role] = max(1, (today - latest_dated.occurred_at).days // 30)
+        elif (
+            seat_changes[role] == 1
+            and role in incumbents_by_role
+            and incumbents_by_role[role].get("tenure_months") is not None
+        ):
+            seat_change_ages[role] = incumbents_by_role[role]["tenure_months"]
+        else:
+            seat_change_ages[role] = None
+
     return StabilityAggregates(
         seat_changes=seat_changes,
+        seat_change_ages_months=seat_change_ages,
         recent_changes=recent_changes,
         current_incumbents_by_role=incumbents_by_role,
         founder_present_in_ceo_seat=founder_in_ceo,
