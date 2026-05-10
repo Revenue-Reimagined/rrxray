@@ -167,7 +167,11 @@ async def synthesize(ctx: SynthesizerContext) -> ObservedStabilityTrajectoryNarr
     response = await ctx.anthropic.complete_with_cached_system(
         system_prompt=system_prompt,
         user_message=user_message,
-        model=ctx.config.model,
+        # Section B is voice-critical AND requires strict instruction-following on
+        # data-anchored timeframes (Sonnet 4.6 was reverting to rounded "9-18 month"
+        # framing even with explicit "use the precise N months" instruction). Per
+        # CLAUDE.md model matrix, narrative-quality judgment work goes to Opus.
+        model="claude-opus-4-7",
         response_schema=NarrativeResponse,
     )
 
