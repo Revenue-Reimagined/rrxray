@@ -104,8 +104,12 @@ async def _extract_exec_changes(
         # to snippet-only extraction.
         body: str | None = None
         try:
-            page = await firecrawl.scrape_url(r.url, only_main_content=True)
-            body = (page.markdown or page.html or "")[:8000]
+            # Use only_main_content=False so the LLM sees the byline / publication
+            # date (typically stripped by main_content extraction). The article body
+            # text containing exec hire context often lives well past the first
+            # main_content section, so truncate generously rather than tightly.
+            page = await firecrawl.scrape_url(r.url, only_main_content=False)
+            body = (page.markdown or page.html or "")[:20000]
         except FirecrawlError as e:
             log.debug("press body fetch failed for %s: %s", r.url, e)
 
