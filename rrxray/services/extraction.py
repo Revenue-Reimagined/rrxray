@@ -130,7 +130,7 @@ class HaikuExtractor:
             f"Snippet: {snippet}",
         ]
         if body:
-            parts.append(f"Full body (truncated to 4000 chars):\n{body[:4000]}")
+            parts.append(f"Full body:\n{body}")
         user_message = "\n\n".join(parts)
         try:
             response = await self.anthropic.complete_with_cached_system(
@@ -185,7 +185,7 @@ class GeminiFlashExtractor:
             f"Snippet: {snippet}",
         ]
         if body:
-            parts.append(f"Full body (truncated to 4000 chars):\n{body[:4000]}")
+            parts.append(f"Full body:\n{body}")
         user_message = "\n\n".join(parts)
         try:
             response = await self.gemini.complete_structured(
