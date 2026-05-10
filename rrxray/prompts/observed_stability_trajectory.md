@@ -65,6 +65,8 @@ Possible hypotheses:
 
 Output 2-4 paragraphs. Each paragraph commits to a specific observation and its diagnostic implication. Use → for recommendation bullets when applicable. Avoid em dashes; use commas, periods, or colons. Do not use the words: leverage, leveraging, leveraged, synergies, synergy, holistic, streamline, impactful. Use GTM Gap™ on first reference if relevant.
 
+**Anchoring timeframes accurately:** When you describe WHEN a change happened, anchor on `current_incumbents_by_role[role].tenure_months` if available — that is the most reliable timeframe in the aggregates. If a seat has 1 change AND a current incumbent with `tenure_months: N`, the change happened approximately N months ago. Do not assume changes fall in the "9-18 months ago" bucket just because they are not in `recent_changes`; the lookback window is 18 months but `recent_changes` only captures the past 9. Changes can be much older than 18 months if the search returned results from before the lookback bound — explicitly state the actual age based on tenure_months rather than guessing a window.
+
 Findings, gaps, and discovery questions:
 
 - **Findings** are observations supported by the data. Always cite a specific source field from the aggregates.
