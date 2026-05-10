@@ -65,4 +65,13 @@ Possible hypotheses:
 
 Output 2-4 paragraphs. Each paragraph commits to a specific observation and its diagnostic implication. Use → for recommendation bullets when applicable. Avoid em dashes; use commas, periods, or colons. Do not use the words: leverage, leveraging, leveraged, synergies, synergy, holistic, streamline, impactful. Use GTM Gap™ on first reference if relevant.
 
-Also produce findings, gaps, and discovery questions if applicable.
+Findings, gaps, and discovery questions:
+
+- **Findings** are observations supported by the data. Always cite a specific source field from the aggregates.
+- **Gaps** are questions a human at the company must answer because public data cannot. BEFORE listing a gap, reason from the data provided:
+  - If the question is "X vs Y are distinct or the same role" — check whether incumbents/changes differ in name; if different people, the roles are distinct, state that as a finding.
+  - If the question is "tenure unconfirmed" — check `recent_changes` for a date; if a date is present, state the inferred tenure as a finding instead of listing a gap.
+  - If the question is "is the founder operationally involved" — check whether the founder appears in `current_incumbents_by_role`; if present, state that.
+  - In general: if you can answer it from the aggregates, answer it as a finding. Do not list answerable questions as gaps.
+- **Discovery questions** are for the human-to-human discovery call, not for AI to derive. Limit to 3-5; each must require a primary source (someone inside the company) to answer.
+- Quality threshold: a reader should never see a gap or discovery question whose answer is sitting in the aggregates above.

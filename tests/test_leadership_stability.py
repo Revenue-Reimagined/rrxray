@@ -91,6 +91,20 @@ def test_search_press_releases_handles_failure_gracefully(fake_firecrawl):
     assert fake_firecrawl.search.call_count == 3
 
 
+def _make_failing_firecrawl():
+    """Build a fake firecrawl whose scrape_url always raises FirecrawlError.
+
+    Existing tests expect snippet-only extraction (no body forwarded). The
+    iteration #3 collector now tries to scrape each press URL; simulating a
+    fetch failure preserves the prior behavior while still routing through
+    the new code path.
+    """
+    from rrxray.services.firecrawl_client import FirecrawlError
+    f = MagicMock()
+    f.scrape_url = AsyncMock(side_effect=FirecrawlError("simulated"))
+    return f
+
+
 def test_extract_exec_changes_filters_irrelevant():
     """Extractor returning is_relevant=False results are dropped."""
     from rrxray.services.extraction import ExtractedExecChange
@@ -107,7 +121,9 @@ def test_extract_exec_changes_filters_irrelevant():
         None,  # irrelevant
     ])
 
-    changes = asyncio.run(_extract_exec_changes(results, extractor, "Acme", "example.com"))
+    changes = asyncio.run(_extract_exec_changes(
+        results, extractor, "Acme", "example.com", _make_failing_firecrawl(),
+    ))
 
     assert len(changes) == 1
     assert changes[0].name == "Jane Doe"
@@ -126,7 +142,9 @@ def test_extract_exec_changes_handles_extractor_none():
     extractor = MagicMock()
     extractor.extract_exec_change = AsyncMock(side_effect=[None, None])
 
-    changes = asyncio.run(_extract_exec_changes(results, extractor, "Acme", "example.com"))
+    changes = asyncio.run(_extract_exec_changes(
+        results, extractor, "Acme", "example.com", _make_failing_firecrawl(),
+    ))
     assert changes == []
 
 
@@ -141,12 +159,49 @@ def test_extract_exec_changes_passes_domain_to_extractor():
     extractor = MagicMock()
     extractor.extract_exec_change = AsyncMock(return_value=None)
 
-    asyncio.run(_extract_exec_changes(results, extractor, "Linear", "linear.app"))
+    asyncio.run(_extract_exec_changes(
+        results, extractor, "Linear", "linear.app", _make_failing_firecrawl(),
+    ))
 
     # Confirm extractor.extract_exec_change was called with target_domain
     call = extractor.extract_exec_change.call_args
     # Accept either positional or keyword
     assert "linear.app" in str(call)
+
+
+def test_extract_exec_changes_fetches_press_body_and_forwards_to_extractor():
+    """Iteration #3: press URL is scraped and full body is passed to extractor."""
+    from rrxray.collectors.leadership_stability import _extract_exec_changes
+    from rrxray.services.extraction import ExecAction, ExtractedExecChange
+    from rrxray.services.firecrawl_client import ScrapedPage, SearchResult
+
+    fake_firecrawl = MagicMock()
+    fake_firecrawl.scrape_url = AsyncMock(return_value=ScrapedPage(
+        url="https://example.com/p",
+        html="...",
+        markdown="Acme appoints Jane Doe as CRO effective March 1, 2026.",
+    ))
+
+    extractor = MagicMock()
+    extractor.extract_exec_change = AsyncMock(return_value=ExtractedExecChange(
+        name="Jane Doe", role_canonical="cro", role_raw="CRO",
+        action=ExecAction.HIRE, is_relevant=True, occurred_at="2026-03-01",
+    ))
+
+    results = [SearchResult(url="https://example.com/p", title="t", description="s")]
+    changes = asyncio.run(_extract_exec_changes(
+        results, extractor, "Acme", "acme.com", fake_firecrawl,
+    ))
+
+    # Body was fetched and forwarded
+    assert fake_firecrawl.scrape_url.called
+    call = extractor.extract_exec_change.call_args
+    assert "March 1, 2026" in str(call) or "appoints" in str(call)
+
+    # occurred_at parsed to date object
+    from datetime import date
+    assert len(changes) == 1
+    assert changes[0].occurred_at == date(2026, 3, 1)
 
 
 def test_search_linkedin_incumbents_runs_seven_role_queries(fake_firecrawl):

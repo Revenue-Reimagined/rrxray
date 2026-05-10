@@ -10,6 +10,7 @@ LLM is used in this collector path for press / LinkedIn snippet extraction
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -79,6 +80,7 @@ async def _extract_exec_changes(
     extractor: HaikuExtractor | GeminiFlashExtractor,
     company: str,
     domain: str,
+    firecrawl: FirecrawlClient,
 ) -> list[ExecChange]:
     """Per-result extraction; filter is_relevant=False; preserve URL + title.
 
@@ -87,21 +89,48 @@ async def _extract_exec_changes(
     "Linear" matches Linear Retail, Linear Health Sciences, etc., as well
     as the actual target Linear.app). The domain is the authoritative
     identifier.
+
+    Iteration #3: each press URL is scraped via Firecrawl and the full body
+    is forwarded to the extractor in addition to title + snippet. The LLM
+    extracts an ISO date in `occurred_at` when present, which is parsed to
+    a date object so Rule 2 (in-transition) findings can fire on real data.
+    Press-URL fetch failures fall back to snippet-only extraction.
     """
+    from rrxray.services.firecrawl_client import FirecrawlError
+
     changes: list[ExecChange] = []
     for r in results:
+        # Try to fetch the press body. Failures are logged and we fall back
+        # to snippet-only extraction.
+        body: str | None = None
+        try:
+            page = await firecrawl.scrape_url(r.url, only_main_content=True)
+            body = (page.markdown or page.html or "")[:8000]
+        except FirecrawlError as e:
+            log.debug("press body fetch failed for %s: %s", r.url, e)
+
         extracted = await extractor.extract_exec_change(
-            r.title, r.description,
-            target_company=company, target_domain=domain,
+            title=r.title,
+            snippet=r.description,
+            target_company=company,
+            target_domain=domain,
+            body=body,
         )
         if extracted is None:
             continue
+
+        # Convert YYYY-MM-DD string to date object; tolerate parse failures.
+        occurred_at: date | None = None
+        if extracted.occurred_at:
+            with contextlib.suppress(ValueError):
+                occurred_at = date.fromisoformat(extracted.occurred_at)
+
         changes.append(ExecChange(
             name=extracted.name,
             role_canonical=extracted.role_canonical,
             role_raw=extracted.role_raw,
             action=extracted.action,
-            occurred_at=None,  # Phase 2.2-deep may extract from snippet metadata
+            occurred_at=occurred_at,
             press_url=r.url,
             press_title=r.title,
         ))
@@ -479,7 +508,7 @@ async def collect(ctx: CollectorContext) -> LeadershipStabilityData:
     # Press path
     press_results = await _search_press_releases(ctx.firecrawl, company)
     exec_changes = await _extract_exec_changes(
-        press_results, ctx.extractor, company, ctx.domain,
+        press_results, ctx.extractor, company, ctx.domain, ctx.firecrawl,
     )
 
     # LinkedIn path

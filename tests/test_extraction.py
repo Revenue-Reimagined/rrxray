@@ -145,6 +145,26 @@ def test_haiku_extractor_keeps_target_company_announcement(fake_anthropic):
     assert result.is_relevant is True
 
 
+def test_haiku_extractor_extracts_occurred_at_date(fake_anthropic):
+    """Iteration #3: extractor parses an ISO date when the body contains a clear effective date."""
+    fake_anthropic.complete_with_cached_system.return_value = _FakeAnthropicResponse(
+        parsed=ExtractedExecChange(
+            name="Jane Doe", role_canonical="cro", role_raw="CRO",
+            action=ExecAction.HIRE, is_relevant=True, occurred_at="2026-03-01",
+        ),
+    )
+    extractor = HaikuExtractor(fake_anthropic)
+    result = asyncio.run(extractor.extract_exec_change(
+        title="Acme Names Jane Doe as CRO",
+        snippet="...",
+        target_company="Acme",
+        target_domain="acme.com",
+        body="Acme today announced the appointment of Jane Doe as Chief Revenue Officer, effective March 1, 2026.",
+    ))
+    assert result is not None
+    assert result.occurred_at == "2026-03-01"
+
+
 def test_haiku_extractor_extract_linkedin_role(fake_anthropic):
     fake_anthropic.complete_with_cached_system.return_value = _FakeAnthropicResponse(
         parsed=ExtractedLinkedInIncumbent(

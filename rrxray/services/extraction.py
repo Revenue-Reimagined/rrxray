@@ -53,6 +53,7 @@ class ExtractedExecChange(BaseModel):
     role_raw: str
     action: ExecAction
     is_relevant: bool
+    occurred_at: str | None = None  # ISO date YYYY-MM-DD if extractable, else None
 
 
 class ExtractedLinkedInIncumbent(BaseModel):
@@ -89,6 +90,8 @@ Map the role to one of these canonical values:
 If the role doesn't map to one of these, pick the closest match and let role_raw preserve the original wording. If no match is reasonable, set is_relevant=False.
 
 Action must be one of: hire, departure, promotion. Promotion = internal move (e.g., "promotes X to CRO"). Hire = external (e.g., "names", "appoints", "joins"). Departure = leaving (e.g., "departs", "resigns", "steps down").
+
+If the body or snippet contains a clear date for when the change took effect (e.g., "effective March 1, 2026", "today announced", "January 15, 2024"), populate `occurred_at` as YYYY-MM-DD. If the date is ambiguous or not stated, set `occurred_at` to None. Do NOT guess or fabricate dates.
 """
 
 
@@ -117,16 +120,22 @@ class HaikuExtractor:
 
     async def extract_exec_change(
         self, title: str, snippet: str, target_company: str, target_domain: str,
+        body: str | None = None,
     ) -> ExtractedExecChange | None:
         from rrxray.services.anthropic_client import AnthropicError
+        parts = [
+            f"Target company: {target_company}",
+            f"Target domain: {target_domain}",
+            f"Title: {title}",
+            f"Snippet: {snippet}",
+        ]
+        if body:
+            parts.append(f"Full body (truncated to 4000 chars):\n{body[:4000]}")
+        user_message = "\n\n".join(parts)
         try:
             response = await self.anthropic.complete_with_cached_system(
                 system_prompt=_EXEC_CHANGE_SYSTEM_PROMPT,
-                user_message=(
-                    f"Target company: {target_company}\n"
-                    f"Target domain: {target_domain}\n\n"
-                    f"Title: {title}\n\nSnippet: {snippet}"
-                ),
+                user_message=user_message,
                 model="claude-haiku-4-5-20251001",
                 response_schema=ExtractedExecChange,
             )
@@ -166,16 +175,22 @@ class GeminiFlashExtractor:
 
     async def extract_exec_change(
         self, title: str, snippet: str, target_company: str, target_domain: str,
+        body: str | None = None,
     ) -> ExtractedExecChange | None:
         from rrxray.services.gemini_client import GeminiError
+        parts = [
+            f"Target company: {target_company}",
+            f"Target domain: {target_domain}",
+            f"Title: {title}",
+            f"Snippet: {snippet}",
+        ]
+        if body:
+            parts.append(f"Full body (truncated to 4000 chars):\n{body[:4000]}")
+        user_message = "\n\n".join(parts)
         try:
             response = await self.gemini.complete_structured(
                 system_prompt=_EXEC_CHANGE_SYSTEM_PROMPT,
-                user_message=(
-                    f"Target company: {target_company}\n"
-                    f"Target domain: {target_domain}\n\n"
-                    f"Title: {title}\n\nSnippet: {snippet}"
-                ),
+                user_message=user_message,
                 response_schema=ExtractedExecChange,
                 model="gemini-2.0-flash",
             )
