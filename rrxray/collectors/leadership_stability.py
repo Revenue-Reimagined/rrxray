@@ -1,12 +1,14 @@
 """leadership_stability collector — first Section B signal.
 
-Surfaces exec-change history (press search), current C-suite (LinkedIn search),
-and founder tenure (/about scrape with Wayback fallback). Populates the
-anonymizer name registry via name_registrations on the schema; pipeline
-applies side effects post-collection.
+Surfaces exec-change history (press search), current C-suite (PDL Person
+Search + Enrichment), and founder tenure (/about scrape with Wayback
+fallback). Populates the anonymizer name registry via name_registrations
+on the schema; pipeline applies side effects post-collection.
 
-LLM is used in this collector path for press / LinkedIn snippet extraction
+LLM is used in this collector path for press snippet extraction only
 (see rrxray/services/extraction.py for the rule amendment rationale).
+Current-incumbent discovery is delegated to LeadershipEnrichment, which
+owns PDL spend tracking and the circuit breaker.
 """
 from __future__ import annotations
 
@@ -30,6 +32,7 @@ from rrxray.schemas.leadership_stability import (
     CurrentIncumbent,
     ExecChange,
     FounderTenure,
+    LeadershipEnrichmentMetadata,
     LeadershipStabilityData,
     NameRegistration,
 )
@@ -139,83 +142,6 @@ async def _extract_exec_changes(
             press_title=r.title,
         ))
     return changes
-
-
-async def _search_linkedin_incumbents(
-    firecrawl: FirecrawlClient, company: str,
-) -> dict[str, list[SearchResult]]:
-    """Run 7 per-role LinkedIn /in/ searches; group results by canonical role.
-
-    Per-role search failures are logged and yield empty list for that role
-    (not missing-key); other roles continue.
-    """
-    from rrxray.services.firecrawl_client import FirecrawlError
-
-    results_by_role: dict[str, list[SearchResult]] = {}
-
-    for canonical, role_query in LEADERSHIP_ROLES:
-        query = f'site:linkedin.com/in "{company}" {role_query}'
-        try:
-            results = await firecrawl.search(query, limit=3)
-        except FirecrawlError as e:
-            log.warning("linkedin search failed for role=%s: %s", canonical, e)
-            results_by_role[canonical] = []
-            continue
-        results_by_role[canonical] = list(results)
-
-    return results_by_role
-
-
-def _confidence_for_linkedin_url(url: str) -> str:
-    """LinkedIn /in/ profile URLs are 'high' confidence; /posts/ URLs are 'low'."""
-    if "/in/" in url:
-        return "high"
-    return "low"
-
-
-async def _extract_current_incumbents(
-    results_by_role: dict[str, list[SearchResult]],
-    extractor: HaikuExtractor | GeminiFlashExtractor,
-    company: str,
-    domain: str,
-) -> list[CurrentIncumbent]:
-    """Per-result LLM extraction; dedupe by (role, name); preserve LinkedIn URL.
-
-    For each role, walk results in order; the first relevant extraction
-    becomes the incumbent for that role. Subsequent same-role-same-name
-    matches are skipped (dedup). The target company name AND domain are
-    both passed through so the extractor can disambiguate when the company
-    name is generic; the domain is the authoritative identifier.
-    """
-    incumbents: list[CurrentIncumbent] = []
-    seen: set[tuple[str, str]] = set()  # (role_canonical, name)
-
-    for role_canonical, results in results_by_role.items():
-        for r in results:
-            extracted = await extractor.extract_linkedin_role(
-                r.title, r.description, role_canonical,
-                target_company=company, target_domain=domain,
-            )
-            if extracted is None:
-                continue
-            key = (extracted.role_canonical, extracted.name)
-            if key in seen:
-                continue
-            seen.add(key)
-            incumbents.append(CurrentIncumbent(
-                name=extracted.name,
-                role_canonical=extracted.role_canonical,
-                role_raw=extracted.role_raw,
-                linkedin_url=r.url,
-                confidence=_confidence_for_linkedin_url(r.url),  # type: ignore[arg-type]
-            ))
-            # Spec: top match per role. The first relevant extraction in the
-            # search-result order becomes the incumbent for this role; later
-            # results in the same role (which can yield distinct names) are
-            # skipped. Same-name dedup across roles still happens via `seen`.
-            break
-
-    return incumbents
 
 
 def _parse_founding_year_from_about(html: str) -> tuple[int, str] | None:
@@ -493,35 +419,51 @@ def _write_evidence(
 
 
 async def collect(ctx: CollectorContext) -> LeadershipStabilityData:
-    """Orchestrator. Runs press + LinkedIn + founder paths in sequence;
-    each handles its own errors gracefully. Returns a fully-validated
-    LeadershipStabilityData with name_registrations populated for the
-    pipeline's anonymizer registration loop.
+    """Orchestrator. Runs press + PDL-incumbent + press-enrichment + founder paths.
+
+    Returns a fully-validated LeadershipStabilityData with name_registrations
+    populated for the pipeline's anonymizer registration loop.
+
+    Phase 2.2-deep: current_incumbents now sourced from PDL via
+    ctx.leadership_enrichment (replaces the Phase 2.2 LinkedIn snippet path).
+    When ctx.leadership_enrichment is None (no PDL key or --no-pdl), the
+    incumbent list is empty and enrichment_metadata.aborted_reason='disabled'.
     """
     company = ctx.company_name or ctx.domain.split(".")[0].title()
 
+    # Press path (unchanged)
+    press_results: list[SearchResult] = []
+    exec_changes: list[ExecChange] = []
     if ctx.extractor is None:
-        log.warning("leadership_stability: no extractor on context; returning empty data")
-        return LeadershipStabilityData(
-            findings=[Finding(
-                text="Leadership stability collector skipped: no extractor configured.",
-                source=_internal_source("config"),
-            )],
+        log.warning("leadership_stability: no extractor on context; skipping press path")
+    else:
+        press_results = await _search_press_releases(ctx.firecrawl, company)
+        exec_changes = await _extract_exec_changes(
+            press_results, ctx.extractor, company, ctx.domain, ctx.firecrawl,
         )
 
-    # Press path
-    press_results = await _search_press_releases(ctx.firecrawl, company)
-    exec_changes = await _extract_exec_changes(
-        press_results, ctx.extractor, company, ctx.domain, ctx.firecrawl,
-    )
+    # PDL incumbent path (Phase 2.2-deep — replaces LinkedIn snippet path)
+    current_incumbents: list[CurrentIncumbent] = []
+    enrichment_metadata = LeadershipEnrichmentMetadata()  # default: aborted_reason="disabled"
 
-    # LinkedIn path
-    linkedin_results_by_role = await _search_linkedin_incumbents(ctx.firecrawl, company)
-    current_incumbents = await _extract_current_incumbents(
-        linkedin_results_by_role, ctx.extractor, company, ctx.domain,
-    )
+    if ctx.leadership_enrichment is not None:
+        enriched = await ctx.leadership_enrichment.find_and_enrich_incumbents(
+            company_name=company,
+            company_domain=ctx.domain,
+            role_canonicals=LEADERSHIP_ROLES,
+        )
+        current_incumbents = enriched.incumbents
+        enrichment_metadata = ctx.leadership_enrichment.metadata
 
-    # Founder tenure path
+        # PDL press-name enrichment runs after incumbents so both calls share
+        # the orchestrator's spend counter / circuit-breaker state.
+        if exec_changes:
+            exec_changes = await ctx.leadership_enrichment.enrich_press_change_names(
+                exec_changes=exec_changes, company_domain=ctx.domain,
+            )
+            enrichment_metadata = ctx.leadership_enrichment.metadata
+
+    # Founder tenure path (unchanged)
     founder_tenure = await _infer_founder_tenure(ctx.firecrawl, ctx.wayback, ctx.domain)
 
     # Build derived data
@@ -532,12 +474,13 @@ async def collect(ctx: CollectorContext) -> LeadershipStabilityData:
         exec_changes, current_incumbents, founder_tenure,
     )
 
-    # Write evidence
+    # Write evidence — linkedin_results_by_role is now always empty (preserved
+    # for evidence-file signature stability; flagged clearly as empty bucket).
     try:
         _write_evidence(
             ctx.evidence_dir,
             press_results,
-            linkedin_results_by_role,
+            {},
             exec_changes,
             current_incumbents,
         )
@@ -552,4 +495,5 @@ async def collect(ctx: CollectorContext) -> LeadershipStabilityData:
         findings=findings,
         gaps=gaps,
         discovery_questions=questions,
+        enrichment_metadata=enrichment_metadata,
     )

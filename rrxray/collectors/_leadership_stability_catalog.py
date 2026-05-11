@@ -5,15 +5,17 @@ catalog data is deterministic.
 """
 from __future__ import annotations
 
-# (canonical, LinkedIn search keyword fragment)
-LEADERSHIP_ROLES: list[tuple[str, str]] = [
-    ("ceo",            '"CEO"'),
-    ("cro",            '"CRO" OR "Chief Revenue Officer"'),
-    ("vp_sales",       '"VP Sales" OR "VP of Sales" OR "Head of Sales"'),
-    ("vp_revenue",     '"VP Revenue" OR "VP of Revenue" OR "Head of Revenue"'),
-    ("cmo",            '"CMO" OR "Chief Marketing Officer"'),
-    ("vp_marketing",   '"VP Marketing" OR "VP of Marketing" OR "Head of Marketing"'),
-    ("founder",        '"Founder" OR "Co-founder"'),
+# (canonical, PDL role-title alternatives)
+# Used as `role_canonicals` argument to LeadershipEnrichment.find_and_enrich_incumbents;
+# each list of titles becomes an OR'd title clause in the PDL Person Search query.
+LEADERSHIP_ROLES: list[tuple[str, list[str]]] = [
+    ("ceo",          ["CEO", "Chief Executive Officer"]),
+    ("cro",          ["CRO", "Chief Revenue Officer"]),
+    ("vp_sales",     ["VP Sales", "VP of Sales", "Head of Sales"]),
+    ("vp_revenue",   ["VP Revenue", "VP of Revenue", "Head of Revenue"]),
+    ("cmo",          ["CMO", "Chief Marketing Officer"]),
+    ("vp_marketing", ["VP Marketing", "VP of Marketing", "Head of Marketing"]),
+    ("founder",      ["Founder", "Co-founder", "Co-Founder"]),
 ]
 
 

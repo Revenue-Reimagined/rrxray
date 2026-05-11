@@ -204,157 +204,6 @@ def test_extract_exec_changes_fetches_press_body_and_forwards_to_extractor():
     assert changes[0].occurred_at == date(2026, 3, 1)
 
 
-def test_search_linkedin_incumbents_runs_seven_role_queries(fake_firecrawl):
-    from rrxray.collectors.leadership_stability import _search_linkedin_incumbents
-
-    # LEADERSHIP_ROLES order: ceo, cro, vp_sales, vp_revenue, cmo, vp_marketing, founder
-    fake_firecrawl.search.side_effect = [
-        _make_search_results(_load_search_response("linkedin_empty_response.json")),  # ceo
-        _make_search_results(_load_search_response("linkedin_cro_response.json")),    # cro
-        _make_search_results(_load_search_response("linkedin_empty_response.json")),  # vp_sales
-        _make_search_results(_load_search_response("linkedin_empty_response.json")),  # vp_revenue
-        _make_search_results(_load_search_response("linkedin_cmo_response.json")),    # cmo
-        _make_search_results(_load_search_response("linkedin_empty_response.json")),  # vp_marketing
-        _make_search_results(_load_search_response("linkedin_empty_response.json")),  # founder
-    ]
-
-    results_by_role = asyncio.run(_search_linkedin_incumbents(fake_firecrawl, company="Acme"))
-
-    assert fake_firecrawl.search.call_count == 7
-    assert set(results_by_role.keys()) == {"ceo", "cro", "vp_sales", "vp_revenue", "cmo", "vp_marketing", "founder"}
-    assert len(results_by_role["cro"]) == 2  # CRO fixture had 2 results
-    assert len(results_by_role["cmo"]) == 1
-
-
-def test_search_linkedin_incumbents_handles_per_role_failure(fake_firecrawl):
-    from rrxray.collectors.leadership_stability import _search_linkedin_incumbents
-    from rrxray.services.firecrawl_client import FirecrawlError
-
-    # First role (ceo) fails; rest return empty
-    fake_firecrawl.search.side_effect = [
-        FirecrawlError("simulated"),
-    ] + [_make_search_results([])] * 6
-
-    results_by_role = asyncio.run(_search_linkedin_incumbents(fake_firecrawl, company="Acme"))
-
-    # Failed role gets empty list, not missing key
-    assert results_by_role["ceo"] == []
-    assert fake_firecrawl.search.call_count == 7
-
-
-def test_extract_current_incumbents_dedupes_by_role_name():
-    """Same (role, name) returned by LinkedIn search across queries: one record."""
-    from rrxray.collectors.leadership_stability import _extract_current_incumbents
-    from rrxray.services.extraction import ExtractedLinkedInIncumbent
-    from rrxray.services.firecrawl_client import SearchResult
-
-    results_by_role = {
-        "cro": [
-            SearchResult(url="https://www.linkedin.com/in/jane-doe-1", title="Jane Doe CRO", description="..."),
-            SearchResult(url="https://www.linkedin.com/in/jane-doe-2", title="Jane Doe CRO", description="..."),
-        ],
-        "cmo": [],
-        "ceo": [],
-        "vp_sales": [],
-        "vp_revenue": [],
-        "vp_marketing": [],
-        "founder": [],
-    }
-
-    extractor = MagicMock()
-    extractor.extract_linkedin_role = AsyncMock(side_effect=[
-        ExtractedLinkedInIncumbent(name="Jane Doe", role_canonical="cro", role_raw="CRO", is_relevant=True),
-        ExtractedLinkedInIncumbent(name="Jane Doe", role_canonical="cro", role_raw="CRO", is_relevant=True),
-    ])
-
-    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor, "Acme", "example.com"))
-
-    assert len(incumbents) == 1
-    assert incumbents[0].name == "Jane Doe"
-    assert incumbents[0].role_canonical == "cro"
-
-
-def test_extract_current_incumbents_marks_post_url_low_confidence():
-    """LinkedIn /posts/ URL gets confidence='low'; /in/ URL gets confidence='high'."""
-    from rrxray.collectors.leadership_stability import _extract_current_incumbents
-    from rrxray.services.extraction import ExtractedLinkedInIncumbent
-    from rrxray.services.firecrawl_client import SearchResult
-
-    results_by_role = {
-        "cmo": [
-            SearchResult(url="https://www.linkedin.com/posts/sara-lee_cmo-acme-activity-12345", title="Sara Lee CMO", description="..."),
-        ],
-        "cro": [
-            SearchResult(url="https://www.linkedin.com/in/bob-cro", title="Bob CRO", description="..."),
-        ],
-        "ceo": [],
-        "vp_sales": [],
-        "vp_revenue": [],
-        "vp_marketing": [],
-        "founder": [],
-    }
-
-    extractor = MagicMock()
-    extractor.extract_linkedin_role = AsyncMock(side_effect=[
-        ExtractedLinkedInIncumbent(name="Sara Lee", role_canonical="cmo", role_raw="CMO", is_relevant=True),
-        ExtractedLinkedInIncumbent(name="Bob", role_canonical="cro", role_raw="CRO", is_relevant=True),
-    ])
-
-    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor, "Acme", "example.com"))
-
-    by_name = {i.name: i for i in incumbents}
-    assert by_name["Sara Lee"].confidence == "low"
-    assert by_name["Bob"].confidence == "high"
-
-
-def test_extract_current_incumbents_keeps_only_top_match_per_role():
-    """Per spec, only the first relevant extraction for a role becomes the
-    incumbent. Subsequent same-role results with different names are dropped
-    even though the (role, name) dedup key is different."""
-    from rrxray.collectors.leadership_stability import _extract_current_incumbents
-    from rrxray.services.extraction import ExtractedLinkedInIncumbent
-    from rrxray.services.firecrawl_client import SearchResult
-
-    results_by_role = {
-        "cro": [
-            SearchResult(url="https://www.linkedin.com/in/first-cro", title="First CRO", description="..."),
-            SearchResult(url="https://www.linkedin.com/in/second-cro", title="Second CRO", description="..."),
-        ],
-        "cmo": [],
-        "ceo": [],
-        "vp_sales": [],
-        "vp_revenue": [],
-        "vp_marketing": [],
-        "founder": [],
-    }
-
-    extractor = MagicMock()
-    extractor.extract_linkedin_role = AsyncMock(side_effect=[
-        ExtractedLinkedInIncumbent(name="First Person", role_canonical="cro", role_raw="CRO", is_relevant=True),
-        ExtractedLinkedInIncumbent(name="Second Person", role_canonical="cro", role_raw="CRO", is_relevant=True),
-    ])
-
-    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor, "Acme", "example.com"))
-
-    assert len(incumbents) == 1
-    assert incumbents[0].name == "First Person"
-
-
-def test_extract_current_incumbents_drops_irrelevant():
-    from rrxray.collectors.leadership_stability import _extract_current_incumbents
-    from rrxray.services.firecrawl_client import SearchResult
-
-    results_by_role = {
-        "cro": [SearchResult(url="https://www.linkedin.com/in/x", title="x", description="y")],
-        "ceo": [], "cmo": [], "vp_sales": [], "vp_revenue": [], "vp_marketing": [], "founder": [],
-    }
-    extractor = MagicMock()
-    extractor.extract_linkedin_role = AsyncMock(return_value=None)
-
-    incumbents = asyncio.run(_extract_current_incumbents(results_by_role, extractor, "Acme", "example.com"))
-    assert incumbents == []
-
-
 def test_infer_founder_tenure_about_page_path(fake_firecrawl):
     """F1 path: /about page with 'Founded in YYYY' -> FounderTenure(source='about_page')."""
     from rrxray.collectors.leadership_stability import _infer_founder_tenure
@@ -704,11 +553,39 @@ def test_emit_findings_total_signal_loss():
     assert any("not recovered" in t.lower() or "discovery" in t.lower() for t in finding_texts)
 
 
+def _make_fake_enrichment_orch(incumbents=None, *, spend=0.0, aborted_reason="completed",
+                               press_passthrough=True, press_enriched=None):
+    """Helper: build a MagicMock LeadershipEnrichment orchestrator with the
+    incumbent return value, optional press-enrichment mutation, and a metadata
+    property that reflects the final spend/aborted state.
+    """
+    from rrxray.schemas.leadership_stability import LeadershipEnrichmentMetadata
+    from rrxray.services.leadership_enrichment import EnrichedLeadership
+
+    orch = MagicMock()
+    orch.find_and_enrich_incumbents = AsyncMock(return_value=EnrichedLeadership(
+        incumbents=incumbents or [],
+        spend_dollars=spend,
+        aborted_reason=aborted_reason,
+    ))
+    if press_enriched is not None:
+        orch.enrich_press_change_names = AsyncMock(return_value=press_enriched)
+    elif press_passthrough:
+        orch.enrich_press_change_names = AsyncMock(
+            side_effect=lambda exec_changes, company_domain: exec_changes
+        )
+    orch.metadata = LeadershipEnrichmentMetadata(
+        spend_dollars=spend, aborted_reason=aborted_reason,
+    )
+    return orch
+
+
 def test_collect_writes_evidence(tmp_path):
     """All four evidence files written under evidence/leadership_stability/."""
     from rrxray.collectors.leadership_stability import collect
     from rrxray.config import Config
     from rrxray.context import CollectorContext
+    from rrxray.schemas.leadership_stability import CurrentIncumbent
     from rrxray.services.extraction import ExecAction, ExtractedExecChange
     from rrxray.services.firecrawl_client import ScrapedPage, SearchResult
 
@@ -718,9 +595,6 @@ def test_collect_writes_evidence(tmp_path):
         [SearchResult(url="u1", title="Acme Names Jane Doe as CRO", description="...")],
         [],
         [],
-        # 7 LinkedIn role queries
-        [SearchResult(url="https://www.linkedin.com/in/jane-doe", title="Jane CRO", description="...")],
-        [], [], [], [], [], [],
     ])
     fake_firecrawl.scrape_url = AsyncMock(return_value=ScrapedPage(
         url="https://example.com/about",
@@ -736,10 +610,13 @@ def test_collect_writes_evidence(tmp_path):
         name="Jane Doe", role_canonical="cro", role_raw="CRO",
         action=ExecAction.HIRE, is_relevant=True,
     ))
-    from rrxray.services.extraction import ExtractedLinkedInIncumbent
-    fake_extractor.extract_linkedin_role = AsyncMock(return_value=ExtractedLinkedInIncumbent(
-        name="Jane Doe", role_canonical="cro", role_raw="CRO", is_relevant=True,
-    ))
+
+    fake_orch = _make_fake_enrichment_orch(incumbents=[
+        CurrentIncumbent(
+            name="Jane Doe", role_canonical="cro", role_raw="CRO",
+            linkedin_url="https://www.linkedin.com/in/jane-doe",
+        ),
+    ])
 
     config = Config(domain="example.com")
     ctx = CollectorContext(
@@ -750,6 +627,7 @@ def test_collect_writes_evidence(tmp_path):
         evidence_dir=tmp_path,
         config=config,
         extractor=fake_extractor,
+        leadership_enrichment=fake_orch,
     )
 
     asyncio.run(collect(ctx))
@@ -767,11 +645,8 @@ def test_collect_returns_full_happy_path(tmp_path):
     from rrxray.collectors.leadership_stability import collect
     from rrxray.config import Config
     from rrxray.context import CollectorContext
-    from rrxray.services.extraction import (
-        ExecAction,
-        ExtractedExecChange,
-        ExtractedLinkedInIncumbent,
-    )
+    from rrxray.schemas.leadership_stability import CurrentIncumbent
+    from rrxray.services.extraction import ExecAction, ExtractedExecChange
     from rrxray.services.firecrawl_client import ScrapedPage, SearchResult
 
     fake_firecrawl = MagicMock()
@@ -779,8 +654,6 @@ def test_collect_returns_full_happy_path(tmp_path):
         [SearchResult(url="https://example.com/p/1", title="Acme Names Jane Doe as CRO", description="...")],
         [],
         [],
-        [SearchResult(url="https://www.linkedin.com/in/jane-doe", title="Jane CRO", description="...")],
-        [], [], [], [], [], [],
     ])
     fake_firecrawl.scrape_url = AsyncMock(return_value=ScrapedPage(
         url="https://example.com/about", html="<p>Founded in 2018</p>", markdown="Founded in 2018",
@@ -793,15 +666,20 @@ def test_collect_returns_full_happy_path(tmp_path):
         name="Jane Doe", role_canonical="cro", role_raw="CRO",
         action=ExecAction.HIRE, is_relevant=True,
     ))
-    fake_extractor.extract_linkedin_role = AsyncMock(return_value=ExtractedLinkedInIncumbent(
-        name="Jane Doe", role_canonical="cro", role_raw="CRO", is_relevant=True,
-    ))
+
+    fake_orch = _make_fake_enrichment_orch(incumbents=[
+        CurrentIncumbent(
+            name="Jane Doe", role_canonical="cro", role_raw="CRO",
+            linkedin_url="https://www.linkedin.com/in/jane-doe",
+        ),
+    ])
 
     ctx = CollectorContext(
         domain="example.com", company_name="Acme",
         firecrawl=fake_firecrawl, wayback=fake_wayback,
         evidence_dir=tmp_path, config=Config(domain="example.com"),
         extractor=fake_extractor,
+        leadership_enrichment=fake_orch,
     )
     data = asyncio.run(collect(ctx))
 
@@ -830,13 +708,14 @@ def test_collect_handles_total_failure(tmp_path):
     fake_extractor = MagicMock()
     # Should never be called since search returned no results, but provide stubs
     fake_extractor.extract_exec_change = AsyncMock(return_value=None)
-    fake_extractor.extract_linkedin_role = AsyncMock(return_value=None)
 
+    # No enrichment orchestrator wired → incumbents remain empty.
     ctx = CollectorContext(
         domain="example.com", company_name="Acme",
         firecrawl=fake_firecrawl, wayback=fake_wayback,
         evidence_dir=tmp_path, config=Config(domain="example.com"),
         extractor=fake_extractor,
+        leadership_enrichment=None,
     )
     data = asyncio.run(collect(ctx))
 
@@ -849,22 +728,19 @@ def test_collect_handles_total_failure(tmp_path):
 
 
 def test_collect_handles_press_search_failure_only(tmp_path):
-    """Press search fails entirely; LinkedIn + founder still work."""
+    """Press search fails entirely; PDL incumbent + founder still work."""
     from rrxray.collectors.leadership_stability import collect
     from rrxray.config import Config
     from rrxray.context import CollectorContext
-    from rrxray.services.extraction import ExtractedLinkedInIncumbent
-    from rrxray.services.firecrawl_client import FirecrawlError, ScrapedPage, SearchResult
+    from rrxray.schemas.leadership_stability import CurrentIncumbent
+    from rrxray.services.firecrawl_client import FirecrawlError, ScrapedPage
 
     fake_firecrawl = MagicMock()
-    # First 3 calls (press hires/departures/promotions) all fail
-    # Next 7 (LinkedIn) return one CRO result
+    # All 3 press searches fail. No LinkedIn search anymore (PDL replaces it).
     fake_firecrawl.search = AsyncMock(side_effect=[
         FirecrawlError("simulated press failure"),
         FirecrawlError("simulated press failure"),
         FirecrawlError("simulated press failure"),
-        [SearchResult(url="https://www.linkedin.com/in/jane", title="Jane CRO", description="...")],
-        [], [], [], [], [], [],
     ])
     fake_firecrawl.scrape_url = AsyncMock(return_value=ScrapedPage(
         url="https://example.com/about", html="<p>Founded in 2018</p>", markdown="Founded in 2018",
@@ -874,19 +750,24 @@ def test_collect_handles_press_search_failure_only(tmp_path):
 
     fake_extractor = MagicMock()
     fake_extractor.extract_exec_change = AsyncMock(return_value=None)
-    fake_extractor.extract_linkedin_role = AsyncMock(return_value=ExtractedLinkedInIncumbent(
-        name="Jane", role_canonical="cro", role_raw="CRO", is_relevant=True,
-    ))
+
+    fake_orch = _make_fake_enrichment_orch(incumbents=[
+        CurrentIncumbent(
+            name="Jane", role_canonical="cro", role_raw="CRO",
+            linkedin_url="https://www.linkedin.com/in/jane",
+        ),
+    ])
 
     ctx = CollectorContext(
         domain="example.com", company_name="Acme",
         firecrawl=fake_firecrawl, wayback=fake_wayback,
         evidence_dir=tmp_path, config=Config(domain="example.com"),
         extractor=fake_extractor,
+        leadership_enrichment=fake_orch,
     )
     data = asyncio.run(collect(ctx))
 
-    # Press path silent; LinkedIn + founder populated
+    # Press path silent; PDL incumbent + founder populated
     assert data.exec_changes == []
     assert len(data.current_incumbents) == 1
     assert data.founder_tenure.inferred_year == 2018
@@ -897,11 +778,8 @@ def test_collect_excludes_names_from_synthesizer_visible_data(tmp_path):
     from rrxray.collectors.leadership_stability import collect
     from rrxray.config import Config
     from rrxray.context import CollectorContext
-    from rrxray.services.extraction import (
-        ExecAction,
-        ExtractedExecChange,
-        ExtractedLinkedInIncumbent,
-    )
+    from rrxray.schemas.leadership_stability import CurrentIncumbent
+    from rrxray.services.extraction import ExecAction, ExtractedExecChange
     from rrxray.services.firecrawl_client import ScrapedPage, SearchResult
 
     fake_firecrawl = MagicMock()
@@ -909,8 +787,6 @@ def test_collect_excludes_names_from_synthesizer_visible_data(tmp_path):
         [SearchResult(url="u1", title="Acme Names Jane Doe as CRO", description="...")],
         [],
         [],
-        [SearchResult(url="https://www.linkedin.com/in/jane", title="Jane CRO", description="...")],
-        [], [], [], [], [], [],
     ])
     fake_firecrawl.scrape_url = AsyncMock(return_value=ScrapedPage(
         url="https://example.com/about", html="<p>Founded in 2018</p>", markdown="...",
@@ -923,15 +799,20 @@ def test_collect_excludes_names_from_synthesizer_visible_data(tmp_path):
         name="Jane Doe", role_canonical="cro", role_raw="CRO",
         action=ExecAction.HIRE, is_relevant=True,
     ))
-    fake_extractor.extract_linkedin_role = AsyncMock(return_value=ExtractedLinkedInIncumbent(
-        name="Jane Doe", role_canonical="cro", role_raw="CRO", is_relevant=True,
-    ))
+
+    fake_orch = _make_fake_enrichment_orch(incumbents=[
+        CurrentIncumbent(
+            name="Jane Doe", role_canonical="cro", role_raw="CRO",
+            linkedin_url="https://www.linkedin.com/in/jane",
+        ),
+    ])
 
     ctx = CollectorContext(
         domain="example.com", company_name="Acme",
         firecrawl=fake_firecrawl, wayback=fake_wayback,
         evidence_dir=tmp_path, config=Config(domain="example.com"),
         extractor=fake_extractor,
+        leadership_enrichment=fake_orch,
     )
     data = asyncio.run(collect(ctx))
 
@@ -945,3 +826,196 @@ def test_collect_excludes_names_from_synthesizer_visible_data(tmp_path):
         assert "Jane Doe" not in finding.text, f"Name leaked into finding: {finding.text!r}"
     for q in data.discovery_questions:
         assert "Jane Doe" not in q
+
+
+# ----------------------------------------------------------------------------
+# T6 (Phase 2.2-deep) — PDL leadership enrichment path
+# ----------------------------------------------------------------------------
+
+
+def test_collect_calls_leadership_enrichment_when_available(tmp_path):
+    """When ctx.leadership_enrichment is set, collect() uses it to populate current_incumbents."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from rrxray.collectors.leadership_stability import collect
+    from rrxray.config import Config
+    from rrxray.context import CollectorContext
+    from rrxray.schemas.leadership_stability import (
+        CurrentIncumbent,
+        LeadershipEnrichmentMetadata,
+    )
+    from rrxray.services.firecrawl_client import FirecrawlError
+    from rrxray.services.leadership_enrichment import EnrichedLeadership
+
+    # Fake firecrawl returns empty press searches + no /about page
+    fake_firecrawl = MagicMock()
+    fake_firecrawl.search = AsyncMock(return_value=[])
+    fake_firecrawl.scrape_url = AsyncMock(side_effect=FirecrawlError("no /about"))
+    fake_wayback = MagicMock()
+    fake_wayback.snapshots = AsyncMock(return_value=[])
+
+    fake_enrichment_meta = LeadershipEnrichmentMetadata(spend_dollars=0.40, aborted_reason="completed")
+    fake_orch = MagicMock()
+    fake_orch.find_and_enrich_incumbents = AsyncMock(return_value=EnrichedLeadership(
+        incumbents=[
+            CurrentIncumbent(
+                name="Jane Doe", role_canonical="cro", role_raw="Chief Revenue Officer",
+                linkedin_url="https://www.linkedin.com/in/jane-doe-cro",
+                tenure_months=14, years_at_company=14,
+                prior_employer="Salesforce", prior_role="VP of Enterprise Sales",
+            ),
+        ],
+        spend_dollars=0.40, aborted_reason="completed",
+    ))
+    fake_orch.enrich_press_change_names = AsyncMock(side_effect=lambda exec_changes, company_domain: exec_changes)
+    fake_orch.metadata = fake_enrichment_meta
+
+    ctx = CollectorContext(
+        domain="acme.com", company_name="Acme",
+        firecrawl=fake_firecrawl, wayback=fake_wayback,
+        evidence_dir=tmp_path, config=Config(domain="acme.com"),
+        extractor=None,
+        leadership_enrichment=fake_orch,
+    )
+    data = asyncio.run(collect(ctx))
+
+    assert len(data.current_incumbents) == 1
+    assert data.current_incumbents[0].tenure_months == 14
+    assert data.current_incumbents[0].prior_employer == "Salesforce"
+    assert data.enrichment_metadata.spend_dollars == 0.40
+    fake_orch.find_and_enrich_incumbents.assert_awaited_once()
+
+
+def test_collect_skips_enrichment_when_ctx_leadership_enrichment_is_none(tmp_path):
+    """When ctx.leadership_enrichment is None, no incumbents are populated; metadata is 'disabled'."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from rrxray.collectors.leadership_stability import collect
+    from rrxray.config import Config
+    from rrxray.context import CollectorContext
+    from rrxray.services.firecrawl_client import FirecrawlError
+
+    fake_firecrawl = MagicMock()
+    fake_firecrawl.search = AsyncMock(return_value=[])
+    fake_firecrawl.scrape_url = AsyncMock(side_effect=FirecrawlError("no /about"))
+    fake_wayback = MagicMock()
+    fake_wayback.snapshots = AsyncMock(return_value=[])
+
+    ctx = CollectorContext(
+        domain="acme.com", company_name="Acme",
+        firecrawl=fake_firecrawl, wayback=fake_wayback,
+        evidence_dir=tmp_path, config=Config(domain="acme.com"),
+        extractor=None,
+        leadership_enrichment=None,
+    )
+    data = asyncio.run(collect(ctx))
+
+    assert data.current_incumbents == []
+    assert data.enrichment_metadata.aborted_reason == "disabled"
+
+
+def test_collect_enriches_press_change_names_when_orchestrator_available(tmp_path):
+    """Press change names get prior_employer / prior_role / years_at_company filled in."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from rrxray.collectors.leadership_stability import collect
+    from rrxray.config import Config
+    from rrxray.context import CollectorContext
+    from rrxray.schemas.leadership_stability import (
+        ExecAction,
+        LeadershipEnrichmentMetadata,
+    )
+    from rrxray.services.extraction import ExtractedExecChange
+    from rrxray.services.firecrawl_client import (
+        FirecrawlError,
+        SearchResult,
+    )
+    from rrxray.services.leadership_enrichment import EnrichedLeadership
+
+    fake_firecrawl = MagicMock()
+    # Press search returns one result that the extractor will turn into an ExecChange
+    fake_firecrawl.search = AsyncMock(side_effect=[
+        [SearchResult(url="https://example.com/p/1", title="Acme Names Jane Doe as CRO", description="...")],
+        [], [],
+    ])
+    fake_firecrawl.scrape_url = AsyncMock(side_effect=FirecrawlError("no /about"))
+    fake_wayback = MagicMock()
+    fake_wayback.snapshots = AsyncMock(return_value=[])
+
+    fake_extractor = MagicMock()
+    fake_extractor.extract_exec_change = AsyncMock(return_value=ExtractedExecChange(
+        name="Jane Doe", role_canonical="cro", role_raw="CRO",
+        action=ExecAction.HIRE, is_relevant=True, occurred_at="2024-03-01",
+    ))
+
+    fake_orch = MagicMock()
+    fake_orch.find_and_enrich_incumbents = AsyncMock(return_value=EnrichedLeadership(
+        incumbents=[], spend_dollars=1.40, aborted_reason="completed",
+    ))
+    # enrich_press_change_names returns mutated copies with prior_employer set
+    def _enrich(exec_changes, company_domain):
+        return [c.model_copy(update={
+            "prior_employer": "Salesforce",
+            "prior_role": "VP of Enterprise Sales",
+            "years_at_company": 1,
+        }) for c in exec_changes]
+    fake_orch.enrich_press_change_names = AsyncMock(side_effect=_enrich)
+    fake_orch.metadata = LeadershipEnrichmentMetadata(spend_dollars=1.60, aborted_reason="completed")
+
+    ctx = CollectorContext(
+        domain="acme.com", company_name="Acme",
+        firecrawl=fake_firecrawl, wayback=fake_wayback,
+        evidence_dir=tmp_path, config=Config(domain="acme.com"),
+        extractor=fake_extractor,
+        leadership_enrichment=fake_orch,
+    )
+    data = asyncio.run(collect(ctx))
+
+    assert len(data.exec_changes) == 1
+    assert data.exec_changes[0].prior_employer == "Salesforce"
+    assert data.exec_changes[0].prior_role == "VP of Enterprise Sales"
+    fake_orch.enrich_press_change_names.assert_awaited_once()
+
+
+def test_collect_returns_partial_data_when_cost_cap_hit(tmp_path):
+    """Orchestrator returns aborted_reason='cost_cap'; collector still returns LeadershipStabilityData."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from rrxray.collectors.leadership_stability import collect
+    from rrxray.config import Config
+    from rrxray.context import CollectorContext
+    from rrxray.schemas.leadership_stability import (
+        CurrentIncumbent,
+        LeadershipEnrichmentMetadata,
+    )
+    from rrxray.services.firecrawl_client import FirecrawlError
+    from rrxray.services.leadership_enrichment import EnrichedLeadership
+
+    fake_firecrawl = MagicMock()
+    fake_firecrawl.search = AsyncMock(return_value=[])
+    fake_firecrawl.scrape_url = AsyncMock(side_effect=FirecrawlError("no /about"))
+    fake_wayback = MagicMock()
+    fake_wayback.snapshots = AsyncMock(return_value=[])
+
+    fake_orch = MagicMock()
+    fake_orch.find_and_enrich_incumbents = AsyncMock(return_value=EnrichedLeadership(
+        incumbents=[
+            CurrentIncumbent(name="A", role_canonical="cro", role_raw="CRO"),
+        ],
+        spend_dollars=5.0, aborted_reason="cost_cap",
+    ))
+    fake_orch.enrich_press_change_names = AsyncMock(side_effect=lambda exec_changes, company_domain: exec_changes)
+    fake_orch.metadata = LeadershipEnrichmentMetadata(spend_dollars=5.0, aborted_reason="cost_cap")
+
+    ctx = CollectorContext(
+        domain="acme.com", company_name="Acme",
+        firecrawl=fake_firecrawl, wayback=fake_wayback,
+        evidence_dir=tmp_path, config=Config(domain="acme.com"),
+        extractor=None,
+        leadership_enrichment=fake_orch,
+    )
+    data = asyncio.run(collect(ctx))
+
+    # Partial data preserved; metadata explains why
+    assert len(data.current_incumbents) == 1
+    assert data.enrichment_metadata.aborted_reason == "cost_cap"

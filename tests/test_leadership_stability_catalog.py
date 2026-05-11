@@ -31,13 +31,17 @@ def test_thresholds_are_sensible():
     assert RECENT_THRESHOLD_DAYS == 270
 
 
-def test_role_search_keywords_quoted():
-    """Each search keyword fragment uses quoted phrases for multi-word terms."""
-    for canonical, query in LEADERSHIP_ROLES:
-        # Single-word canonicals (founder, ceo, cmo, cro) may be unquoted.
-        # Multi-word phrases must be quoted.
-        if " " in query and '"' not in query:
-            raise AssertionError(f"{canonical}: multi-word query must use quoted phrases: {query!r}")
+def test_role_titles_are_pdl_search_alternatives():
+    """Each role canonical maps to a non-empty list of plain role-title strings
+    (used as OR alternatives in PDL Person Search). No quote characters; the
+    PDL search builder wraps them itself.
+    """
+    for canonical, titles in LEADERSHIP_ROLES:
+        assert isinstance(titles, list), f"{canonical}: titles must be a list, got {type(titles).__name__}"
+        assert titles, f"{canonical}: titles list must be non-empty"
+        for t in titles:
+            assert isinstance(t, str) and t, f"{canonical}: title entries must be non-empty strings"
+            assert '"' not in t, f"{canonical}: PDL titles are plain (not pre-quoted): {t!r}"
 
 
 def test_founded_year_patterns_match_common_phrasings():
