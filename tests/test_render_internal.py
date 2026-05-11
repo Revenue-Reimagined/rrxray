@@ -551,3 +551,98 @@ def test_em_dashes_absent_from_leadership_stability_detail():
     # Drop trailing sections (anything after the next top-level Section header)
     ls_section = ls_section.split("\n## ", 1)[0]
     assert "—" not in ls_section
+
+
+def test_leadership_stability_module_detail_renders_tenure_and_prior_employer():
+    from datetime import UTC, datetime
+
+    from rrxray.rendering.markdown import render_internal
+    from rrxray.schemas.data import (
+        CollectorOutputs,
+        InputParams,
+        RunMetadata,
+        XrayData,
+    )
+    from rrxray.schemas.leadership_stability import (
+        CurrentIncumbent,
+        LeadershipEnrichmentMetadata,
+        LeadershipStabilityData,
+        NameRegistration,
+    )
+    from rrxray.voice.anonymizer import Anonymizer
+    from rrxray.voice.rr_voice import VoicePostProcessor
+
+    anonymizer = Anonymizer()
+    anonymizer.register_individual("Jane Doe", "Acme's CRO")
+    # NOT whitelisted (PDL-sourced, not press)
+
+    ls = LeadershipStabilityData(
+        current_incumbents=[
+            CurrentIncumbent(
+                name="Jane Doe", role_canonical="cro", role_raw="CRO",
+                tenure_months=14, years_at_company=14,
+                prior_employer="Salesforce", prior_role="VP of Enterprise Sales",
+            ),
+        ],
+        name_registrations=[
+            NameRegistration(name="Jane Doe", role_descriptor="Acme's CRO", whitelist=False),
+        ],
+        enrichment_metadata=LeadershipEnrichmentMetadata(
+            spend_dollars=2.40, aborted_reason="completed",
+        ),
+    )
+    data = XrayData(
+        domain="acme.com",
+        run_metadata=RunMetadata(
+            timestamp=datetime.now(UTC), tool_version="0.1",
+            modes_built=["internal"], model_used="claude-opus-4-7",
+        ),
+        inputs=InputParams(domain="acme.com"),
+        collectors=CollectorOutputs(leadership_stability=ls),
+    )
+    rendered = render_internal(data, anonymizer, VoicePostProcessor())
+
+    # Tenure column rendered
+    assert "14 months" in rendered or "~14 months" in rendered
+    # Prior employer shown
+    assert "Salesforce" in rendered
+    # Name anonymized (not whitelisted)
+    assert "Jane Doe" not in rendered
+    assert "Acme's CRO" in rendered
+
+
+def test_module_detail_renders_enrichment_metadata_line():
+    from datetime import UTC, datetime
+
+    from rrxray.rendering.markdown import render_internal
+    from rrxray.schemas.data import (
+        CollectorOutputs,
+        InputParams,
+        RunMetadata,
+        XrayData,
+    )
+    from rrxray.schemas.leadership_stability import (
+        LeadershipEnrichmentMetadata,
+        LeadershipStabilityData,
+    )
+    from rrxray.voice.anonymizer import Anonymizer
+    from rrxray.voice.rr_voice import VoicePostProcessor
+
+    ls = LeadershipStabilityData(
+        enrichment_metadata=LeadershipEnrichmentMetadata(
+            spend_dollars=2.83, aborted_reason="cost_cap",
+        ),
+    )
+    data = XrayData(
+        domain="acme.com",
+        run_metadata=RunMetadata(
+            timestamp=datetime.now(UTC), tool_version="0.1",
+            modes_built=["internal"], model_used="claude-opus-4-7",
+        ),
+        inputs=InputParams(domain="acme.com"),
+        collectors=CollectorOutputs(leadership_stability=ls),
+    )
+    rendered = render_internal(data, Anonymizer(), VoicePostProcessor())
+
+    assert "$2.83" in rendered or "2.83" in rendered
+    assert "cost_cap" in rendered
