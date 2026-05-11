@@ -1,0 +1,26 @@
+{
+  "status": 200,
+  "data": {
+    "full_name": "Bob Smith",
+    "linkedin_url": "https://www.linkedin.com/in/bob-smith-cro",
+    "job_title": "Chief Revenue Officer",
+    "job_company_name": "Acme Corp",
+    "job_company_website": "acme.com",
+    "job_start_date": "2025-09-01",
+    "job_company_size": "201-500",
+    "experience": [
+      {
+        "company": {"name": "Acme Corp", "website": "acme.com"},
+        "title": {"name": "Chief Revenue Officer"},
+        "start_date": "2025-09-01",
+        "end_date": null
+      },
+      {
+        "company": {"name": "Acme Corp", "website": "acme.com"},
+        "title": {"name": "VP of Sales"},
+        "start_date": "2022-06-01",
+        "end_date": "2025-08-31"
+      }
+    ]
+  }
+}

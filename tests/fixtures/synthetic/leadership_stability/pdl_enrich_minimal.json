@@ -1,0 +1,13 @@
+{
+  "status": 200,
+  "data": {
+    "full_name": "Sparse Person",
+    "linkedin_url": null,
+    "job_title": "VP Marketing",
+    "job_company_name": "Acme Corp",
+    "job_company_website": null,
+    "job_start_date": null,
+    "job_company_size": null,
+    "experience": []
+  }
+}

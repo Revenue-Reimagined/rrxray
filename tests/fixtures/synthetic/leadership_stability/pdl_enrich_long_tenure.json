@@ -1,0 +1,20 @@
+{
+  "status": 200,
+  "data": {
+    "full_name": "Founder Person",
+    "linkedin_url": "https://www.linkedin.com/in/founder-person",
+    "job_title": "CEO and Founder",
+    "job_company_name": "Acme Corp",
+    "job_company_website": "acme.com",
+    "job_start_date": "2018-01-01",
+    "job_company_size": "201-500",
+    "experience": [
+      {
+        "company": {"name": "Acme Corp", "website": "acme.com"},
+        "title": {"name": "CEO and Founder"},
+        "start_date": "2018-01-01",
+        "end_date": null
+      }
+    ]
+  }
+}
