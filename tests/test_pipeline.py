@@ -80,3 +80,42 @@ def test_data_json_round_trips_with_observed_stability_trajectory():
     assert restored.synthesizers.observed_stability_trajectory.narrative_paragraphs == [
         "Test paragraph."
     ]
+
+
+def test_pipeline_instantiates_pdl_client_when_key_present(tmp_path):
+    """When PDL_API_KEY is set and --no-pdl is not, build_collector_context wires up the enrichment orchestrator."""
+    from rrxray.config import Config
+    from rrxray.pipeline import build_collector_context
+    config = Config(domain="example.com")
+    # Manually set the key (SecretStr requires construction)
+    from pydantic import SecretStr
+    config = Config(domain="example.com")
+    config.pdl_api_key = SecretStr("test-pdl-key")  # type: ignore[misc]
+
+    ctx = build_collector_context(config)
+    assert ctx.leadership_enrichment is not None
+
+
+def test_pipeline_skips_pdl_when_no_api_key(tmp_path):
+    """No PDL_API_KEY → leadership_enrichment is None."""
+    from rrxray.config import Config
+    from rrxray.pipeline import build_collector_context
+    config = Config(domain="example.com")  # no PDL_API_KEY in env
+    # Explicitly clear any inherited key
+    config.pdl_api_key = None  # type: ignore[misc]
+
+    ctx = build_collector_context(config)
+    assert ctx.leadership_enrichment is None
+
+
+def test_pipeline_skips_pdl_when_no_pdl_flag_set(tmp_path):
+    """--no-pdl flag → leadership_enrichment is None even with API key present."""
+    from pydantic import SecretStr
+
+    from rrxray.config import Config
+    from rrxray.pipeline import build_collector_context
+    config = Config(domain="example.com", no_pdl=True)
+    config.pdl_api_key = SecretStr("test-pdl-key")  # type: ignore[misc]
+
+    ctx = build_collector_context(config)
+    assert ctx.leadership_enrichment is None

@@ -30,6 +30,8 @@ from rrxray.services.cache import DiskCache
 from rrxray.services.extraction import make_extractor
 from rrxray.services.firecrawl_client import FirecrawlClient
 from rrxray.services.gemini_client import GeminiClient
+from rrxray.services.leadership_enrichment import LeadershipEnrichment
+from rrxray.services.pdl_client import PDLClient
 from rrxray.services.wayback_client import WaybackClient
 from rrxray.synthesizers import observed_gtm_motion, observed_stability_trajectory
 from rrxray.voice.anonymizer import Anonymizer
@@ -82,6 +84,23 @@ def build_collector_context(config) -> CollectorContext:
     if getattr(config, "gemini_api_key", None) is not None:
         gemini = GeminiClient(api_key=config.gemini_api_key.get_secret_value())
     extractor = make_extractor(config, anthropic, gemini)
+
+    # Phase 2.2-deep: PDL leadership enrichment (optional; gated by PDL_API_KEY + --no-pdl)
+    leadership_enrichment = None
+    pdl_key = getattr(config, "pdl_api_key", None)
+    if not getattr(config, "no_pdl", False) and pdl_key is not None:
+        pdl_client = PDLClient(
+            api_key=pdl_key.get_secret_value(),
+            cache=DiskCache(
+                dir=cache_root / "pdl",
+                mode="live" if config.use_cache else "refresh",
+            ),
+        )
+        leadership_enrichment = LeadershipEnrichment(
+            pdl=pdl_client,
+            cost_cap_dollars=getattr(config, "pdl_cost_cap_dollars", 5.0),
+        )
+
     return CollectorContext(
         domain=config.domain,
         company_name=config.company_name,
@@ -90,6 +109,7 @@ def build_collector_context(config) -> CollectorContext:
         evidence_dir=config.evidence_dir,
         config=config,
         extractor=extractor,
+        leadership_enrichment=leadership_enrichment,
     )
 
 
