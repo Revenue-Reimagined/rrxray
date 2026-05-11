@@ -10,7 +10,6 @@ from pydantic import BaseModel
 from rrxray.services.extraction import (
     ExecAction,
     ExtractedExecChange,
-    ExtractedLinkedInIncumbent,
     GeminiFlashExtractor,
     HaikuExtractor,
     make_extractor,
@@ -18,7 +17,7 @@ from rrxray.services.extraction import (
 
 
 class _FakeAnthropicResponse(BaseModel):
-    parsed: ExtractedExecChange | ExtractedLinkedInIncumbent
+    parsed: ExtractedExecChange
     model_used: str = "claude-haiku-4-5-20251001"
     cache_hit: bool = False
 
@@ -165,32 +164,8 @@ def test_haiku_extractor_extracts_occurred_at_date(fake_anthropic):
     assert result.occurred_at == "2026-03-01"
 
 
-def test_haiku_extractor_extract_linkedin_role(fake_anthropic):
-    fake_anthropic.complete_with_cached_system.return_value = _FakeAnthropicResponse(
-        parsed=ExtractedLinkedInIncumbent(
-            name="Bob Smith",
-            role_canonical="cmo",
-            role_raw="Chief Marketing Officer",
-            is_relevant=True,
-        ),
-    )
-
-    extractor = HaikuExtractor(fake_anthropic)
-    result = asyncio.run(extractor.extract_linkedin_role(
-        title="Bob Smith - Chief Marketing Officer at Acme - LinkedIn",
-        snippet="Bob Smith. Chief Marketing Officer at Acme Corp. New York, NY.",
-        role_query="cmo",
-        target_company="Acme",
-        target_domain="acme.com",
-    ))
-
-    assert result is not None
-    assert result.name == "Bob Smith"
-    assert result.role_canonical == "cmo"
-
-
 class _FakeGeminiResponse(BaseModel):
-    parsed: ExtractedExecChange | ExtractedLinkedInIncumbent
+    parsed: ExtractedExecChange
     model_used: str = "gemini-2.0-flash"
     cache_hit: bool = False
 

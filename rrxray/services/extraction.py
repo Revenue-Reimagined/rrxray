@@ -56,13 +56,6 @@ class ExtractedExecChange(BaseModel):
     occurred_at: str | None = None  # ISO date YYYY-MM-DD if extractable, else None
 
 
-class ExtractedLinkedInIncumbent(BaseModel):
-    name: str
-    role_canonical: RoleCanonical
-    role_raw: str
-    is_relevant: bool
-
-
 _EXEC_CHANGE_SYSTEM_PROMPT = """You extract structured exec-change records from press release titles and snippets.
 
 The user message will begin with "Target company: <name>" and "Target domain: <domain>". The target company is identified by both name and domain. The DOMAIN is the authoritative identifier. Many companies share generic words in their names (e.g., "Linear" could be Linear the project management tool at linear.app, OR Linear Retail, OR Linear Health Sciences, OR Linear Clinical Research, OR Linear Air — these are all different companies). If the press release is about a different organization that shares part of the target's name, set is_relevant=False.
@@ -92,25 +85,6 @@ If the role doesn't map to one of these, pick the closest match and let role_raw
 Action must be one of: hire, departure, promotion. Promotion = internal move (e.g., "promotes X to CRO"). Hire = external (e.g., "names", "appoints", "joins"). Departure = leaving (e.g., "departs", "resigns", "steps down").
 
 If the body or snippet contains a clear date for when the change took effect (e.g., "effective March 1, 2026", "today announced", "January 15, 2024"), populate `occurred_at` as YYYY-MM-DD. If the date is ambiguous or not stated, set `occurred_at` to None. Do NOT guess or fabricate dates.
-"""
-
-
-_LINKEDIN_INCUMBENT_SYSTEM_PROMPT = """You extract a person's name and current role from a LinkedIn search result.
-
-The user message will begin with "Target company: <name>" and "Target domain: <domain>". The target company is identified by both name and domain. The DOMAIN is the authoritative identifier. Many companies share generic words in their names (e.g., "Linear" could be Linear the project management tool at linear.app, OR Linear Retail, OR Linear Health Sciences, OR Linear Clinical Research, OR Linear Air — these are all different companies). Set is_relevant=True ONLY when the LinkedIn snippet clearly indicates the person currently holds this role at the company at the target domain — not at a different company that shares part of the target's name, and not at a previous company in the person's history.
-
-You must verify that the LinkedIn profile/snippet clearly indicates the person currently holds the role AT that target company. If the snippet shows the person is at a DIFFERENT company (a competitor, a similarly-named-but-distinct company, a former employer, or an unrelated firm that happens to surface in the search), set is_relevant=False — even if the role title matches.
-
-Given a search result title, snippet, and the role we were searching for, identify whether this result names a current incumbent in that role at the target company.
-
-Set is_relevant=True ONLY if ALL of the following hold:
-1. The profile/snippet clearly indicates the person is currently at the company at the target domain (not a former role, not a similar-sounding different company, not a competitor).
-2. Both the person's name and role are clearly stated.
-3. The role appears to be current (not a past role or unrelated context).
-
-Otherwise, set is_relevant=False. When in doubt, set is_relevant=False. False positives produce confidently-wrong synthesizer narratives; false negatives only mean the report has less data, which is recoverable in discovery.
-
-Map role_canonical to: ceo, cro, vp_sales, vp_revenue, cmo, vp_marketing, founder. role_raw should preserve the wording from the result.
 """
 
 
@@ -145,28 +119,6 @@ class HaikuExtractor:
         result = response.parsed
         return result if result.is_relevant else None
 
-    async def extract_linkedin_role(
-        self, title: str, snippet: str, role_query: str,
-        target_company: str, target_domain: str,
-    ) -> ExtractedLinkedInIncumbent | None:
-        from rrxray.services.anthropic_client import AnthropicError
-        try:
-            response = await self.anthropic.complete_with_cached_system(
-                system_prompt=_LINKEDIN_INCUMBENT_SYSTEM_PROMPT,
-                user_message=(
-                    f"Target company: {target_company}\n"
-                    f"Target domain: {target_domain}\n\n"
-                    f"Role we were searching for: {role_query}\n\n"
-                    f"Title: {title}\n\nSnippet: {snippet}"
-                ),
-                model="claude-haiku-4-5-20251001",
-                response_schema=ExtractedLinkedInIncumbent,
-            )
-        except (AnthropicError, ValidationError) as e:
-            log.debug("Haiku extract_linkedin_role failed: %s", e)
-            return None
-        result = response.parsed
-        return result if result.is_relevant else None
 
 
 class GeminiFlashExtractor:
@@ -200,28 +152,6 @@ class GeminiFlashExtractor:
         result = response.parsed
         return result if result.is_relevant else None
 
-    async def extract_linkedin_role(
-        self, title: str, snippet: str, role_query: str,
-        target_company: str, target_domain: str,
-    ) -> ExtractedLinkedInIncumbent | None:
-        from rrxray.services.gemini_client import GeminiError
-        try:
-            response = await self.gemini.complete_structured(
-                system_prompt=_LINKEDIN_INCUMBENT_SYSTEM_PROMPT,
-                user_message=(
-                    f"Target company: {target_company}\n"
-                    f"Target domain: {target_domain}\n\n"
-                    f"Role we were searching for: {role_query}\n\n"
-                    f"Title: {title}\n\nSnippet: {snippet}"
-                ),
-                response_schema=ExtractedLinkedInIncumbent,
-                model="gemini-2.0-flash",
-            )
-        except (GeminiError, ValidationError) as e:
-            log.debug("Gemini extract_linkedin_role failed: %s", e)
-            return None
-        result = response.parsed
-        return result if result.is_relevant else None
 
 
 def make_extractor(
