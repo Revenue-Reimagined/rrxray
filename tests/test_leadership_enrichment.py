@@ -241,6 +241,67 @@ def test_enrich_press_change_names_returns_unmutated_on_no_pdl_match(fake_pdl):
     assert enriched[0].name == "Unknown"
 
 
+def test_enrich_press_change_names_circuit_break_with_duplicate_changes(fake_pdl):
+    """Pydantic BaseModel.__eq__ is field-equality, so two identical
+    ExecChange instances compare equal. The previous implementation
+    used `exec_changes.index(change) + 1` to slice "remaining
+    unprocessed" on circuit-break — `.index()` returns the *first*
+    matching index, so the slice was wrong when duplicates appeared.
+
+    Trip the circuit breaker partway through a list whose first three
+    entries are identical, and assert the resulting "remaining" tail
+    is sliced from the actual position, not the first match."""
+    # Two identical changes at positions 0 and 1, then unique changes at 2..4
+    dup_change = ExecChange(
+        name="Dup Person", role_canonical="cro", role_raw="CRO",
+        action=ExecAction.HIRE, press_url="u-dup", press_title="t-dup",
+    )
+    unique_changes = [
+        ExecChange(
+            name=f"Unique {i}", role_canonical="cro", role_raw="CRO",
+            action=ExecAction.HIRE, press_url=f"u-{i}", press_title=f"t-{i}",
+        )
+        for i in range(3)
+    ]
+    # exec_changes = [dup, dup, unique0, unique1, unique2]
+    # We expect 3 failures starting from idx=0, tripping the breaker after
+    # processing change at idx=2 (the 3rd consecutive failure). The bug:
+    # at idx=2, `enriched` currently has the failed-and-appended entry, and
+    # the buggy "remaining" slice starts at exec_changes.index(unique0)+1
+    # = 3. That happens to be correct for unique0 (the first occurrence),
+    # so to actually expose the bug we need the *failing* change to be a
+    # duplicate.
+    exec_changes = [dup_change, dup_change, dup_change, unique_changes[0], unique_changes[1]]
+    fake_pdl.enrich_person.side_effect = [
+        PDLError("fail 1"),
+        PDLError("fail 2"),
+        PDLError("fail 3"),
+        # Circuit should be tripped by now; this would only be called if the bug let it through
+        None,
+        None,
+    ]
+
+    orch = LeadershipEnrichment(pdl=fake_pdl, cost_cap_dollars=5.0)
+    enriched = asyncio.run(orch.enrich_press_change_names(
+        exec_changes=exec_changes, company_domain="acme.com",
+    ))
+
+    # Circuit breaker tripped at the 3rd failure (idx=2). Expected behavior:
+    # the failing change at idx=2 was appended, and the remaining
+    # exec_changes[3:] = [unique_changes[0], unique_changes[1]] are copied
+    # over unmutated.
+    assert len(enriched) == 5, (
+        f"Expected 5 entries after circuit-break (3 failed + 2 unprocessed), "
+        f"got {len(enriched)}. The .index(change) bug returns the index of the "
+        f"first duplicate, producing a wrong slice."
+    )
+    # Last two entries must be the unique changes in original order
+    assert enriched[3].name == "Unique 0"
+    assert enriched[4].name == "Unique 1"
+    # Only the 3 attempted calls happened (4th and 5th never reached)
+    assert fake_pdl.enrich_person.call_count == 3
+
+
 def test_enrichment_metadata_records_spend_dollars(fake_pdl):
     fake_pdl.search_people.return_value = [
         _search_result("Jane", "https://www.linkedin.com/in/jane"),

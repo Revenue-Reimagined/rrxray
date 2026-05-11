@@ -162,7 +162,10 @@ class LeadershipEnrichment:
     ) -> list[ExecChange]:
         """Per ExecChange: PDL Enrich by (name, company_domain). Returns mutated copies."""
         enriched: list[ExecChange] = []
-        for change in exec_changes:
+        # Use enumerate so we have the actual loop index for "remaining" slicing.
+        # ExecChange is a pydantic BaseModel with field-equality `__eq__`, so
+        # list.index() returns the FIRST match — wrong when duplicates exist.
+        for idx, change in enumerate(exec_changes):
             if not self._can_spend(PDL_COST_PER_ENRICHMENT):
                 enriched.append(change)
                 continue
@@ -176,9 +179,10 @@ class LeadershipEnrichment:
                 self._record_failure()
                 enriched.append(change)
                 if self._circuit_open:
-                    # Append remaining changes unmutated
-                    remaining_idx = exec_changes.index(change) + 1
-                    enriched.extend(exec_changes[remaining_idx:])
+                    # Append remaining changes unmutated using the actual
+                    # loop index (not list.index, which would return the
+                    # first duplicate's position).
+                    enriched.extend(exec_changes[idx + 1:])
                     return enriched
                 continue
 
