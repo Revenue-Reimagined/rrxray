@@ -60,3 +60,15 @@ def test_run_command_accepts_extractor_flag():
     runner = CliRunner()
     result = runner.invoke(app, ["run", "--domain", "example.com", "--dry-run", "--extractor", "gemini-flash"])
     assert result.exit_code == 0, result.stdout
+
+
+def test_run_command_accepts_pdl_cost_cap_and_no_pdl_flags():
+    from typer.testing import CliRunner
+
+    from rrxray.cli import app
+    runner = CliRunner()
+    result = runner.invoke(app, [
+        "run", "--domain", "example.com", "--dry-run",
+        "--pdl-cost-cap", "3.5", "--no-pdl",
+    ])
+    assert result.exit_code == 0, result.stdout
