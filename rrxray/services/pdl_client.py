@@ -62,6 +62,21 @@ class PDLClient:
             from peopledatalabs import PDLPY
             self._sdk = PDLPY(api_key=api_key)
 
+    def _redact_for_log(self, exc: Exception) -> str:
+        """Generic, key-free description of an SDK exception for logging.
+
+        Some HTTP libraries echo request URLs / Authorization headers into
+        exception messages; logging `str(e)` would leak `self.api_key`. We
+        log only the exception type and a fixed phrase.
+        """
+        return f"{type(exc).__name__}"
+
+    def _sanitize_error_message(self, message: str) -> str:
+        """Strip api_key from a message before raising it as PDLError."""
+        if self.api_key and self.api_key in message:
+            return message.replace(self.api_key, "[REDACTED]")
+        return message
+
     async def search_people(
         self,
         company_domain: str,
@@ -100,8 +115,13 @@ class PDLClient:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                log.warning("PDL search failed: %s", e)
-                raise PDLError(f"search_people failed: {e}") from e
+                # Some SDK exceptions echo request URLs/headers that include
+                # the api_key. Log only the exception type; raise a sanitized
+                # PDLError so the key cannot reach callers/UI either.
+                log.warning("PDL search failed (%s)", self._redact_for_log(e))
+                raise PDLError(
+                    self._sanitize_error_message(f"search_people failed: {e}"),
+                ) from e
             return response
 
         raw = await self.cache.get_or_call("pdl.search", args, upstream)
@@ -159,8 +179,12 @@ class PDLClient:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                log.warning("PDL enrichment failed: %s", e)
-                raise PDLError(f"enrich_person failed: {e}") from e
+                # See note in search_people: sanitize api_key out of the log
+                # and the raised PDLError before they reach callers.
+                log.warning("PDL enrichment failed (%s)", self._redact_for_log(e))
+                raise PDLError(
+                    self._sanitize_error_message(f"enrich_person failed: {e}"),
+                ) from e
             return response
 
         raw = await self.cache.get_or_call("pdl.enrich", cache_key, upstream)

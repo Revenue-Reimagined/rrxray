@@ -138,6 +138,52 @@ def test_enrich_person_caches_by_linkedin_url(client, fake_sdk):
     assert fake_sdk.person.enrichment.call_count == 1
 
 
+def test_sdk_exception_does_not_leak_api_key_in_search(client, fake_sdk, caplog):
+    """If the underlying PDL SDK raises an exception whose message includes
+    the API key (some HTTP libs echo headers/URLs), neither the resulting
+    PDLError string nor the warning log line should contain the key."""
+    api_key = "test-key"
+    fake_sdk.person.search.side_effect = RuntimeError(
+        f"GET /v5/person/search?api_key={api_key} failed with 401"
+    )
+
+    with (
+        pytest.raises(PDLError) as exc_info,
+        caplog.at_level("WARNING", logger="rrxray.pdl"),
+    ):
+        asyncio.run(client.search_people("acme.com", ["CRO"]))
+
+    assert api_key not in str(exc_info.value), (
+        f"PDLError message leaked api_key: {exc_info.value}"
+    )
+    leaking_records = [r for r in caplog.records if api_key in r.getMessage()]
+    assert not leaking_records, (
+        f"Warning log leaked api_key: {[r.getMessage() for r in leaking_records]}"
+    )
+
+
+def test_sdk_exception_does_not_leak_api_key_in_enrich(client, fake_sdk, caplog):
+    """Same guard for the enrich path."""
+    api_key = "test-key"
+    fake_sdk.person.enrichment.side_effect = RuntimeError(
+        f"Authorization header: Bearer {api_key}"
+    )
+
+    with (
+        pytest.raises(PDLError) as exc_info,
+        caplog.at_level("WARNING", logger="rrxray.pdl"),
+    ):
+        asyncio.run(client.enrich_person(linkedin_url="https://example.com/x"))
+
+    assert api_key not in str(exc_info.value), (
+        f"PDLError message leaked api_key: {exc_info.value}"
+    )
+    leaking_records = [r for r in caplog.records if api_key in r.getMessage()]
+    assert not leaking_records, (
+        f"Warning log leaked api_key: {[r.getMessage() for r in leaking_records]}"
+    )
+
+
 def test_search_people_rejects_single_quote_in_company_domain(client, fake_sdk):
     """company_domain flows from --domain (user-controlled). A domain
     containing a single quote could alter the SQL query (injection).
