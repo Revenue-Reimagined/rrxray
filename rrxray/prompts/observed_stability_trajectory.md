@@ -43,6 +43,26 @@ You will receive aggregated leadership data — counts and tenures, never names.
 - Founder tenure: ~{{ aggregates.founder_tenure_years }} years
 {% endif %}
 
+**Tenure confirmation:** {{ aggregates.tenure_confirmed_count }} of {{ aggregates.tenure_confirmed_total }} current incumbents have tenure data confirmed via PeopleDataLabs.
+
+**Hire-origin pattern:**
+- External hires (incumbents who came from outside the company): {{ aggregates.external_hire_count }}
+- Internal promotions (incumbents promoted from within): {{ aggregates.internal_promotion_count }}
+
+**Prior employer per role (where confirmed):**
+{% for role, prior in aggregates.prior_employer_signals.items() %}
+{% if prior %}
+- {{ role }}: came from {{ prior }}
+{% else %}
+- {{ role }}: prior employer not recovered
+{% endif %}
+{% endfor %}
+
+**Leadership enrichment status:** {{ aggregates.enrichment_aborted_reason }} (spend: ${{ "%.2f"|format(aggregates.enrichment_spend_dollars) }})
+{% if aggregates.enrichment_aborted_reason == "cost_cap" or aggregates.enrichment_aborted_reason == "circuit_breaker" %}
+Note: PDL enrichment was partial. Some incumbents may lack tenure / prior-employer context. Frame findings accordingly.
+{% endif %}
+
 **Seats with no public change in 18 months:** {{ aggregates.seats_with_no_change_18mo | join(", ") if aggregates.seats_with_no_change_18mo else "none" }}
 
 **Collector findings (rule-based):**
@@ -66,6 +86,13 @@ Possible hypotheses:
 - **Signal not recovered** — public sources insufficient to commit to a hypothesis; discovery must establish
 
 Output 2-4 paragraphs. Each paragraph commits to a specific observation and its diagnostic implication. Use → for recommendation bullets when applicable. Avoid em dashes; use commas, periods, or colons. Do not use the words: leverage, leveraging, leveraged, synergies, synergy, holistic, streamline, impactful. Use GTM Gap™ on first reference if relevant.
+
+**Prior-employer motion lens:** When you see a prior_employer for a revenue or marketing role, infer the motion shape that incumbent likely brings:
+- Came from an enterprise SaaS (Salesforce, Oracle, etc.) → likely enterprise outbound motion bias
+- Came from a PLG company (Figma, Notion, etc.) → likely product-led pipeline bias
+- Came from a smaller startup / unknown → bias unclear; do not speculate
+- Came from the same vertical → motion stays domain-aligned; market expertise > motion shift
+This is a working hypothesis only — state it as such ("the incoming CRO came from X, suggesting...") rather than as a confirmed fact.
 
 **Anchoring timeframes accurately:** When you describe WHEN a change happened, anchor on `current_incumbents_by_role[role].tenure_months` if available — that is the most reliable timeframe in the aggregates. If a seat has 1 change AND a current incumbent with `tenure_months: N`, the change happened approximately N months ago. Do not assume changes fall in the "9-18 months ago" bucket just because they are not in `recent_changes`; the lookback window is 18 months but `recent_changes` only captures the past 9. Changes can be much older than 18 months if the search returned results from before the lookback bound — explicitly state the actual age based on tenure_months rather than guessing a window.
 

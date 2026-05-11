@@ -37,6 +37,14 @@ class StabilityAggregates(BaseModel):
     founder_tenure_years: int | None
     seats_with_no_change_18mo: list[str]
     collector_findings: list[str]
+    # Phase 2.2-deep additions
+    tenure_confirmed_count: int = 0
+    tenure_confirmed_total: int = 0
+    external_hire_count: int = 0
+    internal_promotion_count: int = 0
+    prior_employer_signals: dict[str, str | None] = Field(default_factory=dict)
+    enrichment_aborted_reason: str = "disabled"
+    enrichment_spend_dollars: float = 0.0
 
 
 class NarrativeResponse(BaseModel):
@@ -93,8 +101,11 @@ def _build_aggregates(data: LeadershipStabilityData) -> StabilityAggregates:
         if latest_change is not None and latest_change.occurred_at is not None:
             tenure_months = max(1, (today - latest_change.occurred_at).days // 30)
         incumbents_by_role[inc.role_canonical] = {
-            "tenure_months": tenure_months,
+            "tenure_months": inc.tenure_months if inc.tenure_months is not None else tenure_months,
             "confidence": inc.confidence,
+            "years_at_company": inc.years_at_company,
+            "prior_employer": inc.prior_employer,
+            "prior_role": inc.prior_role,
         }
 
     # Founder presence in CEO seat
@@ -133,6 +144,33 @@ def _build_aggregates(data: LeadershipStabilityData) -> StabilityAggregates:
         else:
             seat_change_ages[role] = None
 
+    # Phase 2.2-deep: tenure confirmation counts (high-confidence incumbents only)
+    high_conf = [i for i in data.current_incumbents if i.confidence == "high"]
+    tenure_confirmed_count = sum(1 for i in high_conf if i.tenure_months is not None)
+    tenure_confirmed_total = len(high_conf)
+
+    # Phase 2.2-deep: external hire vs internal promotion counts + prior_employer signals
+    # Heuristic (per plan):
+    # - external hire: prior_employer is set (and non-empty) → came from outside
+    # - internal promotion: prior_role is set AND prior_employer is None → moved up within
+    # Internal-promotion debias: if both fire, decrement external (the plan documents
+    # this as the de-bias step so internal+external never double-counts a person).
+    external_hire_count = 0
+    internal_promotion_count = 0
+    prior_employer_signals: dict[str, str | None] = {}
+    for inc in high_conf:
+        prior_employer_signals[inc.role_canonical] = inc.prior_employer
+        if inc.prior_employer is not None:
+            external_hire_count += 1
+    for inc in high_conf:
+        if inc.prior_role is not None and inc.prior_employer is None:
+            internal_promotion_count += 1
+            external_hire_count = max(0, external_hire_count - 1)
+
+    # Phase 2.2-deep: enrichment metadata
+    enrichment_aborted_reason = data.enrichment_metadata.aborted_reason
+    enrichment_spend_dollars = data.enrichment_metadata.spend_dollars
+
     return StabilityAggregates(
         seat_changes=seat_changes,
         seat_change_ages_months=seat_change_ages,
@@ -142,6 +180,13 @@ def _build_aggregates(data: LeadershipStabilityData) -> StabilityAggregates:
         founder_tenure_years=founder_tenure_years,
         seats_with_no_change_18mo=seats_with_no_change,
         collector_findings=[f.text for f in data.findings],
+        tenure_confirmed_count=tenure_confirmed_count,
+        tenure_confirmed_total=tenure_confirmed_total,
+        external_hire_count=external_hire_count,
+        internal_promotion_count=internal_promotion_count,
+        prior_employer_signals=prior_employer_signals,
+        enrichment_aborted_reason=enrichment_aborted_reason,
+        enrichment_spend_dollars=enrichment_spend_dollars,
     )
 
 
