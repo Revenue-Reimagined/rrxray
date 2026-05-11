@@ -5,7 +5,7 @@ from datetime import date
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from rrxray.schemas._shared import Finding, SourceCitation
 
@@ -29,6 +29,10 @@ class ExecChange(BaseModel):
     occurred_at: date | None = None
     press_url: str
     press_title: str
+    # Phase 2.2-deep enrichment fields
+    prior_employer: str | None = None
+    prior_role: str | None = None
+    years_at_company: int | None = None
 
 
 class CurrentIncumbent(BaseModel):
@@ -37,6 +41,11 @@ class CurrentIncumbent(BaseModel):
     role_raw: str
     linkedin_url: str | None = None
     confidence: Literal["high", "low"] = "high"
+    # Phase 2.2-deep enrichment fields
+    tenure_months: int | None = None
+    years_at_company: int | None = None
+    prior_employer: str | None = None
+    prior_role: str | None = None
 
 
 class FounderTenure(BaseModel):
@@ -51,6 +60,12 @@ class NameRegistration(BaseModel):
     whitelist: bool = False
 
 
+class LeadershipEnrichmentMetadata(BaseModel):
+    """Tracking metadata for PDL leadership enrichment (Phase 2.2-deep)."""
+    spend_dollars: float = 0.0
+    aborted_reason: Literal["completed", "cost_cap", "circuit_breaker", "disabled"] = "disabled"
+
+
 class LeadershipStabilityData(BaseModel):
     exec_changes: list[ExecChange] = []
     current_incumbents: list[CurrentIncumbent] = []
@@ -60,3 +75,5 @@ class LeadershipStabilityData(BaseModel):
     gaps: list[str] = []
     discovery_questions: list[str] = []
     sources: list[SourceCitation] = []
+    # Phase 2.2-deep
+    enrichment_metadata: LeadershipEnrichmentMetadata = Field(default_factory=LeadershipEnrichmentMetadata)

@@ -97,3 +97,75 @@ def test_leadership_stability_data_round_trips():
     assert restored.exec_changes[0].name == "Jane Doe"
     assert restored.founder_tenure.inferred_year == 2018
     assert restored.name_registrations[0].whitelist is True
+
+
+def test_current_incumbent_enrichment_fields_default_none():
+    """Phase 2.2-deep: tenure_months / years_at_company / prior_employer / prior_role default to None."""
+    from rrxray.schemas.leadership_stability import CurrentIncumbent
+    c = CurrentIncumbent(name="Jane", role_canonical="cro", role_raw="CRO")
+    assert c.tenure_months is None
+    assert c.years_at_company is None
+    assert c.prior_employer is None
+    assert c.prior_role is None
+
+
+def test_current_incumbent_round_trips_with_enrichment_fields():
+    import json
+
+    from rrxray.schemas.leadership_stability import CurrentIncumbent
+    c = CurrentIncumbent(
+        name="Jane", role_canonical="cro", role_raw="CRO",
+        tenure_months=14, years_at_company=14,
+        prior_employer="Salesforce", prior_role="VP of Enterprise Sales",
+    )
+    restored = CurrentIncumbent.model_validate(json.loads(c.model_dump_json()))
+    assert restored.tenure_months == 14
+    assert restored.prior_employer == "Salesforce"
+    assert restored.prior_role == "VP of Enterprise Sales"
+
+
+def test_exec_change_enrichment_fields_default_none():
+    from rrxray.schemas.leadership_stability import ExecAction, ExecChange
+    e = ExecChange(
+        name="Jane", role_canonical="cro", role_raw="CRO",
+        action=ExecAction.HIRE, press_url="x", press_title="y",
+    )
+    assert e.prior_employer is None
+    assert e.prior_role is None
+    assert e.years_at_company is None
+
+
+def test_leadership_enrichment_metadata_default_disabled():
+    from rrxray.schemas.leadership_stability import LeadershipEnrichmentMetadata
+    m = LeadershipEnrichmentMetadata()
+    assert m.spend_dollars == 0.0
+    assert m.aborted_reason == "disabled"
+
+
+def test_leadership_enrichment_metadata_accepts_all_aborted_reasons():
+    import pytest
+    from pydantic import ValidationError
+
+    from rrxray.schemas.leadership_stability import LeadershipEnrichmentMetadata
+    for reason in ["completed", "cost_cap", "circuit_breaker", "disabled"]:
+        m = LeadershipEnrichmentMetadata(aborted_reason=reason)
+        assert m.aborted_reason == reason
+    with pytest.raises(ValidationError):
+        LeadershipEnrichmentMetadata(aborted_reason="invalid_value")
+
+
+def test_leadership_stability_data_round_trips_with_enrichment_metadata():
+    import json
+
+    from rrxray.schemas.leadership_stability import (
+        LeadershipEnrichmentMetadata,
+        LeadershipStabilityData,
+    )
+    d = LeadershipStabilityData(
+        enrichment_metadata=LeadershipEnrichmentMetadata(
+            spend_dollars=2.40, aborted_reason="completed",
+        ),
+    )
+    restored = LeadershipStabilityData.model_validate(json.loads(d.model_dump_json()))
+    assert restored.enrichment_metadata.spend_dollars == 2.40
+    assert restored.enrichment_metadata.aborted_reason == "completed"
