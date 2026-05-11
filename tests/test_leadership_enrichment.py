@@ -10,6 +10,7 @@ from rrxray.schemas.leadership_stability import ExecAction, ExecChange
 from rrxray.services.leadership_enrichment import (
     EnrichedLeadership,
     LeadershipEnrichment,
+    _years_at_company,
 )
 from rrxray.services.pdl_client import (
     PDLEnrichment,
@@ -239,6 +240,83 @@ def test_enrich_press_change_names_returns_unmutated_on_no_pdl_match(fake_pdl):
 
     assert enriched[0].prior_employer is None
     assert enriched[0].name == "Unknown"
+
+
+def test_years_at_company_ignores_experience_with_empty_website():
+    """`"" in "anything"` is True, so the prior substring-match treated
+    every experience entry with empty `company.website` as a match for
+    the prospect's domain — pulling in older tenures and inflating
+    years_at_company. Tighten the match: empty website must NOT match.
+
+    Construct a PDLEnrichment with one OLD experience entry that has
+    `company.website=""` (would falsely match under substring rule) and
+    one CURRENT entry whose website explicitly matches `acme.com`. The
+    correct years_at_company must come from the matching entry only."""
+    enr = PDLEnrichment(
+        full_name="Test",
+        linkedin_url="https://example.com/x",
+        current_title="CRO",
+        job_company_name="Acme",
+        job_start_date="2024-03-01",
+        experience=[
+            # Old role with empty website. Under the buggy substring rule
+            # this falsely matches acme.com and earliest_start collapses
+            # to 2010-01-01 → inflated tenure ~15 years.
+            {
+                "company": {"name": "Old Company", "website": ""},
+                "title": {"name": "VP of Sales"},
+                "start_date": "2010-01-01",
+                "end_date": "2020-12-31",
+            },
+            # Current role at Acme with a proper website.
+            {
+                "company": {"name": "Acme", "website": "acme.com"},
+                "title": {"name": "CRO"},
+                "start_date": "2024-03-01",
+                "end_date": None,
+            },
+        ],
+    )
+
+    years = _years_at_company(enr, "acme.com")
+    # Should be derived from the 2024-03-01 entry only (~1-2 years as of
+    # 2026-05-11), NOT inflated to 15+ years by the empty-website match.
+    assert years is not None
+    assert years < 5, (
+        f"years_at_company={years} — buggy empty-website match inflated tenure"
+    )
+
+
+def test_years_at_company_matches_only_on_normalized_bare_domain():
+    """Match should normalize protocol/www/trailing slash on both sides,
+    then compare equal. Substring matches that would have falsely
+    matched (e.g. `acme.com` substring inside `notacme.com`) should not."""
+    enr = PDLEnrichment(
+        full_name="Test",
+        linkedin_url="https://example.com/x",
+        current_title="CRO",
+        job_company_name="Acme",
+        job_start_date="2024-03-01",
+        experience=[
+            # False-positive substring: 'acme.com' is a substring of 'notacme.com'
+            {
+                "company": {"name": "Not Acme", "website": "notacme.com"},
+                "title": {"name": "Other Role"},
+                "start_date": "2010-01-01",
+                "end_date": "2020-12-31",
+            },
+            # Legit match w/ protocol + www prefix
+            {
+                "company": {"name": "Acme", "website": "https://www.acme.com/"},
+                "title": {"name": "CRO"},
+                "start_date": "2024-03-01",
+                "end_date": None,
+            },
+        ],
+    )
+    years = _years_at_company(enr, "acme.com")
+    assert years is not None
+    assert years < 5
 
 
 def test_enrich_press_change_names_circuit_break_with_duplicate_changes(fake_pdl):

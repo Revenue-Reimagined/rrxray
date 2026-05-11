@@ -210,9 +210,32 @@ def _months_since(iso_date: str) -> int | None:
     return max(0, months)
 
 
+def _normalize_domain(value: str | None) -> str:
+    """Lowercase, strip protocol/www/trailing slash so two website-like
+    strings compare equal on the bare domain. Returns '' for None/empty
+    so callers can short-circuit on falsy."""
+    if not value:
+        return ""
+    s = value.strip().lower()
+    for prefix in ("https://", "http://"):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+            break
+    if s.startswith("www."):
+        s = s[4:]
+    # Drop any path
+    slash = s.find("/")
+    if slash != -1:
+        s = s[:slash]
+    return s
+
+
 def _years_at_company(enr, company_domain: str) -> int | None:
     """Total years at the current company, summing all role tenures there."""
     if enr is None or not enr.experience:
+        return None
+    target = _normalize_domain(company_domain)
+    if not target:
         return None
     earliest_start: str | None = None
     for exp in enr.experience:
@@ -221,12 +244,19 @@ def _years_at_company(enr, company_domain: str) -> int | None:
         company = exp.get("company") or {}
         if not isinstance(company, dict):
             continue
-        # Match by company name OR website
-        website = (company.get("website") or "").lower()
-        if company_domain.lower() in website or website in company_domain.lower():
-            start = exp.get("start_date")
-            if start and (earliest_start is None or start < earliest_start):
-                earliest_start = start
+        # Match by website only; normalize both sides to bare domain form
+        # (lowercase, strip protocol/www/path) then exact-compare. Substring
+        # matches are unsafe: empty website matches anything, and unrelated
+        # companies whose names happen to share a TLD-ish substring would
+        # also match.
+        website_norm = _normalize_domain(company.get("website"))
+        if not website_norm:
+            continue
+        if website_norm != target:
+            continue
+        start = exp.get("start_date")
+        if start and (earliest_start is None or start < earliest_start):
+            earliest_start = start
     if earliest_start is None:
         return None
     months = _months_since(earliest_start)
