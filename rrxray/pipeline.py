@@ -85,10 +85,16 @@ def build_collector_context(config) -> CollectorContext:
         gemini = GeminiClient(api_key=config.gemini_api_key.get_secret_value())
     extractor = make_extractor(config, anthropic, gemini)
 
-    # Phase 2.2-deep: PDL leadership enrichment (optional; gated by PDL_API_KEY + --no-pdl)
+    # Phase 2.2-deep: PDL leadership enrichment (optional; gated by PDL_API_KEY + --no-pdl).
+    # Treat empty SecretStr as absent — a `PDL_API_KEY=` placeholder line in .env
+    # loads as SecretStr(""), which would otherwise pass `is not None` and 401.
     leadership_enrichment = None
     pdl_key = getattr(config, "pdl_api_key", None)
-    if not getattr(config, "no_pdl", False) and pdl_key is not None:
+    if (
+        not getattr(config, "no_pdl", False)
+        and pdl_key is not None
+        and pdl_key.get_secret_value()
+    ):
         pdl_client = PDLClient(
             api_key=pdl_key.get_secret_value(),
             cache=DiskCache(

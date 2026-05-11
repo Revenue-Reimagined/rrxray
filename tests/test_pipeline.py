@@ -119,3 +119,21 @@ def test_pipeline_skips_pdl_when_no_pdl_flag_set(tmp_path):
 
     ctx = build_collector_context(config)
     assert ctx.leadership_enrichment is None
+
+
+def test_pipeline_skips_pdl_when_api_key_is_empty_string(tmp_path):
+    """Empty PDL_API_KEY (e.g. unfilled placeholder in .env) → leadership_enrichment is None.
+
+    Pydantic loads `PDL_API_KEY=` from a dotenv file as SecretStr(""), which would
+    pass an `is not None` check and surface as a 401 at first call. The pipeline
+    must treat empty as absent.
+    """
+    from pydantic import SecretStr
+
+    from rrxray.config import Config
+    from rrxray.pipeline import build_collector_context
+    config = Config(domain="example.com")
+    config.pdl_api_key = SecretStr("")  # type: ignore[misc]
+
+    ctx = build_collector_context(config)
+    assert ctx.leadership_enrichment is None
