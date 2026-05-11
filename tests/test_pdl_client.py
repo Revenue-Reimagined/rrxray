@@ -138,6 +138,29 @@ def test_enrich_person_caches_by_linkedin_url(client, fake_sdk):
     assert fake_sdk.person.enrichment.call_count == 1
 
 
+def test_search_people_rejects_single_quote_in_company_domain(client, fake_sdk):
+    """company_domain flows from --domain (user-controlled). A domain
+    containing a single quote could alter the SQL query (injection).
+    PDLClient must reject such input."""
+    with pytest.raises(PDLError):
+        asyncio.run(client.search_people("acme.com' OR job_title='%", ["CRO"]))
+
+
+def test_search_people_rejects_single_quote_in_role_titles(client, fake_sdk):
+    """Same SQL-injection guard for role titles."""
+    with pytest.raises(PDLError):
+        asyncio.run(client.search_people("acme.com", ["CRO' OR 1='1"]))
+
+
+def test_search_people_allows_valid_input(client, fake_sdk):
+    """Sanity check: valid domain and titles don't trip the guard."""
+    response = _load_fixture("pdl_search_cro_response.json")
+    fake_sdk.person.search.return_value = MagicMock(json=lambda: response, status_code=200)
+
+    results = asyncio.run(client.search_people("acme.com", ["CRO"]))
+    assert len(results) == 2
+
+
 def test_enrich_person_sorts_experience_reverse_chrono_for_previous_companies(client, fake_sdk):
     """PDL does not guarantee experience ordering; orchestrator relies on
     previous_companies[0] being the *most recent* prior employer. Build a

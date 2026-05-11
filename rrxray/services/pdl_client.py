@@ -72,7 +72,22 @@ class PDLClient:
 
         Caches by (company_domain, role_titles_sorted, size); 30-day TTL via DiskCache.
         Raises PDLError on terminal SDK failure (200-no-match is NOT an error).
+        Raises PDLError if any input contains a single quote (SQL-injection guard).
         """
+        # SQL-injection guard: company_domain is user-controlled (--domain) and
+        # role_titles flow from internal catalog but defense-in-depth still
+        # applies. SQL is built via interpolation in _build_search_call;
+        # reject any single-quote input so the query stays bounded.
+        if "'" in company_domain:
+            raise PDLError(
+                f"search_people: company_domain contains disallowed character (single quote): {company_domain!r}",
+            )
+        for title in role_titles:
+            if "'" in title:
+                raise PDLError(
+                    f"search_people: role title contains disallowed character (single quote): {title!r}",
+                )
+
         args = {
             "domain": company_domain,
             "titles": sorted(role_titles),
