@@ -136,3 +136,70 @@ def test_enrich_person_caches_by_linkedin_url(client, fake_sdk):
     asyncio.run(client.enrich_person(linkedin_url=url))
 
     assert fake_sdk.person.enrichment.call_count == 1
+
+
+def test_enrich_person_sorts_experience_reverse_chrono_for_previous_companies(client, fake_sdk):
+    """PDL does not guarantee experience ordering; orchestrator relies on
+    previous_companies[0] being the *most recent* prior employer. Build a
+    response with shuffled (oldest-first, missing-date mixed) experience and
+    assert previous_companies[0]/previous_titles[0] are the most recent."""
+    shuffled_response = {
+        "status": 200,
+        "data": {
+            "full_name": "Shuffle Person",
+            "linkedin_url": "https://www.linkedin.com/in/shuffle",
+            "job_title": "Chief Revenue Officer",
+            "job_company_name": "Acme",
+            "job_start_date": "2024-03-01",
+            "experience": [
+                # Oldest first
+                {
+                    "company": {"name": "Oldest Co"},
+                    "title": {"name": "Junior Account Exec"},
+                    "start_date": "2010-01-01",
+                    "end_date": "2014-12-31",
+                },
+                # Missing end_date (current role) in the middle
+                {
+                    "company": {"name": "Acme"},
+                    "title": {"name": "Chief Revenue Officer"},
+                    "start_date": "2024-03-01",
+                    "end_date": None,
+                },
+                # Missing dates entirely
+                {
+                    "company": {"name": "Mystery Co"},
+                    "title": {"name": "Advisor"},
+                },
+                # Most recent prior employer (newest end_date)
+                {
+                    "company": {"name": "Most Recent Prior"},
+                    "title": {"name": "VP of Sales"},
+                    "start_date": "2020-06-01",
+                    "end_date": "2024-02-15",
+                },
+                # Middle-aged
+                {
+                    "company": {"name": "Middle Co"},
+                    "title": {"name": "Senior Manager"},
+                    "start_date": "2015-01-01",
+                    "end_date": "2020-05-30",
+                },
+            ],
+        },
+    }
+    fake_sdk.person.enrichment.return_value = MagicMock(
+        json=lambda: shuffled_response, status_code=200,
+    )
+
+    result = asyncio.run(client.enrich_person(
+        linkedin_url="https://www.linkedin.com/in/shuffle",
+    ))
+
+    assert result is not None
+    # Most recent prior employer (by end_date desc) must be first
+    assert result.previous_companies[0] == "Most Recent Prior"
+    assert result.previous_titles[0] == "VP of Sales"
+    # Subsequent should be Middle Co then Oldest Co (reverse-chrono by end_date)
+    assert result.previous_companies[1] == "Middle Co"
+    assert result.previous_companies[2] == "Oldest Co"

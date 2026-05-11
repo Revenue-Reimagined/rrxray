@@ -159,8 +159,18 @@ class PDLClient:
         experience = data.get("experience", []) if isinstance(data.get("experience"), list) else []
         previous_companies: list[str] = []
         previous_titles: list[str] = []
-        # Reverse-chrono order: skip the current role (end_date=None), collect previous
-        for exp in experience:
+        # PDL does not guarantee ordering of experience across responses. We
+        # explicitly sort by end_date descending so previous_companies[0] is the
+        # most recent prior employer (the orchestrator depends on this). Missing
+        # or None end_date sorts to the end of the prior-roles list. The current
+        # role (end_date=None) is skipped below.
+        def _end_date_key(exp: object) -> str:
+            if not isinstance(exp, dict):
+                return ""
+            v = exp.get("end_date")
+            return v if isinstance(v, str) else ""
+        sorted_experience = sorted(experience, key=_end_date_key, reverse=True)
+        for exp in sorted_experience:
             if not isinstance(exp, dict):
                 continue
             end_date = exp.get("end_date")
