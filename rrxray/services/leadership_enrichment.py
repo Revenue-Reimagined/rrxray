@@ -203,10 +203,20 @@ class LeadershipEnrichment:
 
 
 def _months_since(iso_date: str) -> int | None:
-    """Compute months since the given ISO YYYY-MM-DD date. None on parse failure."""
+    """Compute months since the given ISO date string. None on parse failure.
+
+    Accepts both YYYY-MM-DD (full date) and YYYY-MM (month precision, the
+    format PDL actually returns for `job_start_date`). datetime.fromisoformat
+    rejects YYYY-MM, so we pad to YYYY-MM-01 before parsing.
+    """
     from datetime import UTC, datetime
+    if not isinstance(iso_date, str):
+        return None
+    s = iso_date
+    if len(s) == 7 and s[4] == "-":
+        s = s + "-01"
     try:
-        start = datetime.fromisoformat(iso_date).date()
+        start = datetime.fromisoformat(s).date()
     except (ValueError, TypeError):
         return None
     today = datetime.now(UTC).date()

@@ -10,6 +10,7 @@ from rrxray.schemas.leadership_stability import ExecAction, ExecChange
 from rrxray.services.leadership_enrichment import (
     EnrichedLeadership,
     LeadershipEnrichment,
+    _months_since,
     _years_at_company,
 )
 from rrxray.services.pdl_client import (
@@ -398,3 +399,29 @@ def test_enrichment_metadata_records_spend_dollars(fake_pdl):
     # 1 search (0.20) + 1 enrich (0.20) = 0.40
     assert abs(meta.spend_dollars - 0.40) < 0.01
     assert meta.aborted_reason == "completed"
+
+
+def test_months_since_accepts_month_precision_iso_date():
+    """PDL returns job_start_date as YYYY-MM (month precision). _months_since must
+    parse this — the prior YYYY-MM-DD-only behavior nulled tenure_months for every
+    incumbent in T10's swayable smoke. Pad to YYYY-MM-01 before parsing."""
+    from datetime import UTC, datetime
+
+    # Both formats must produce the same answer (a real, non-None month count).
+    full = _months_since("2017-05-15")
+    month_only = _months_since("2017-05")
+    assert full is not None and full > 0, "full ISO date should parse"
+    assert month_only is not None and month_only > 0, "month-precision must parse (was None pre-fix)"
+    # Both should round to the same month bucket (May 2017).
+    assert full == month_only
+
+    # Sanity-check the arithmetic against the runtime clock.
+    today = datetime.now(UTC).date()
+    expected = (today.year - 2017) * 12 + (today.month - 5)
+    assert month_only == max(0, expected)
+
+    # Invalid inputs still return None.
+    assert _months_since("2017") is None
+    assert _months_since("not a date") is None
+    assert _months_since("") is None
+    assert _months_since(None) is None  # type: ignore[arg-type]
