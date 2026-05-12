@@ -95,6 +95,45 @@ This is non-negotiable. Dale's explicit ask: "best model for the best action for
 
 ---
 
+## Architectural rules (project-wide)
+
+These rules govern phase scope and implementation. They have evolved through Phase 1, 2.1, and 2.2 — current version is canonical.
+
+**1. LLM use in collector path** (amended 2026-05-09 during Phase 2.2)
+
+Original Phase 1/2.1 rule: no LLM in collector path. Collectors must be deterministic.
+
+Current rule: **No LLM in collector path UNLESS the data is genuinely unstructured natural language AND a deterministic alternative would degrade quality.**
+
+In practice:
+- Pricing-page parsing, tech-stack signature detection, role-title categorization → deterministic (catalog + regex)
+- Press release name/role/action extraction, LinkedIn snippet incumbent identification → LLM (per-result Haiku or Gemini Flash)
+- The amendment is justified per-collector in the spec; surface the decision explicitly in any new collector spec.
+
+**2. Paid third-party APIs** (amended 2026-05-09 during Phase 2.2)
+
+Original Phase 1/2.1 rule: no paid third-party APIs (Coresignal, PeopleDataLabs, Apollo, ZoomInfo, etc.).
+
+Current rule: **One approved data partner per signal area, picked deliberately.** Constraints:
+- One provider per signal area (not stacked)
+- Cost-aware: per-X-Ray cost increase must be justified by client value increase
+- Documented in CLAUDE.md and the relevant phase checkpoint
+- Free / public sources still preferred when they meet the quality bar
+
+Currently approved (or pending approval) data partners:
+- **PeopleDataLabs** (pending Phase 2.2-deep) — leadership tenure + role history. ~$0.20/record × ~7 records = ~$1/X-Ray. Justified by closing the "tenure unconfirmed" narrative gap that's currently a discovery-question punt.
+
+Currently rejected:
+- Coresignal (overlap with PDL; would re-evaluate only if PDL data quality is insufficient)
+- Proxycurl (more expensive, marginal value over PDL)
+- Apollo / ZoomInfo (sales-intel oriented; wrong tool for outside-operator GTM diagnostic)
+
+**3. No LinkedIn profile-page scraping** (still in force)
+
+Login-walled. Use search-snippet metadata from Firecrawl OR licensed data partners (PDL etc.). Do not scrape `linkedin.com/in/...` pages directly.
+
+---
+
 ## Environment gotchas
 
 These are real issues encountered during Phase 1; future sessions should know about them.

@@ -1,0 +1,62 @@
+{% set ls = data.collectors.leadership_stability %}
+
+#### Founder tenure
+
+{% if ls.founder_tenure and ls.founder_tenure.inferred_year %}
+- Inferred founding year: {{ ls.founder_tenure.inferred_year }} (source: {{ ls.founder_tenure.source }})
+{% if ls.founder_tenure.raw_evidence %}
+- Evidence: `{{ ls.founder_tenure.raw_evidence }}`
+{% endif %}
+{% else %}
+- Not inferable from public sources.
+{% endif %}
+
+#### Current incumbents
+
+{% if ls.current_incumbents %}
+| Role | Name | Tenure | Prior employer (last role) | LinkedIn |
+|---|---|---|---|---|
+{% for inc in ls.current_incumbents %}
+| {{ inc.role_canonical }} | {{ inc.name | anonymize | voice_collector }} | {% if inc.tenure_months %}~{{ inc.tenure_months }} months{% else %}unconfirmed{% endif %} | {% if inc.prior_employer %}{{ inc.prior_employer }}{% if inc.prior_role %} ({{ inc.prior_role }}){% endif %}{% else %}-{% endif %} | {% if inc.linkedin_url %}[link]({{ inc.linkedin_url }}){% else %}-{% endif %} |
+{% endfor %}
+{% else %}
+None recovered from public sources.
+{% endif %}
+
+#### Exec changes (past 18 months)
+
+{% if ls.exec_changes %}
+| Role | Action | Name | Date | Background | Source |
+|---|---|---|---|---|---|
+{% for change in ls.exec_changes %}
+| {{ change.role_canonical }} | {{ change.action }} | {{ change.name | anonymize | voice_collector }} | {{ change.occurred_at or "-" }} | {% if change.prior_employer %}from {{ change.prior_employer }}{% if change.prior_role %} ({{ change.prior_role }}){% endif %}{% else %}-{% endif %} | [press]({{ change.press_url }}) |
+{% endfor %}
+{% else %}
+No public exec announcements recovered.
+{% endif %}
+
+{% if ls.findings %}
+#### Findings
+
+{% for finding in ls.findings %}
+- {{ finding.text | anonymize | voice_collector }}
+{% endfor %}
+{% endif %}
+
+{% if ls.gaps %}
+#### Gaps
+
+{% for gap in ls.gaps %}
+- {{ gap }}
+{% endfor %}
+{% endif %}
+
+{% if ls.discovery_questions %}
+#### Discovery questions
+
+{% for q in ls.discovery_questions %}
+- {{ q }}
+{% endfor %}
+{% endif %}
+
+**Enrichment:** ${{ "%.2f"|format(ls.enrichment_metadata.spend_dollars) }} spent; status: {{ ls.enrichment_metadata.aborted_reason }}.

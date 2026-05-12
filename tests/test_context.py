@@ -5,7 +5,16 @@ def test_collector_context_is_frozen():
     from rrxray.context import CollectorContext
 
     fields = {f.name for f in CollectorContext.__dataclass_fields__.values()}
-    assert fields == {"domain", "company_name", "firecrawl", "wayback", "evidence_dir", "config"}
+    assert fields == {
+        "domain",
+        "company_name",
+        "firecrawl",
+        "wayback",
+        "evidence_dir",
+        "config",
+        "extractor",
+        "leadership_enrichment",  # NEW Phase 2.2-deep
+    }
 
 
 def test_synthesizer_context_is_frozen():

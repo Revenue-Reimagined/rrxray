@@ -101,12 +101,29 @@ def run(
     use_cache: bool = typer.Option(True, "--use-cache/--no-cache"),
     dry_run: bool = typer.Option(False, "--dry-run"),
     model: str = typer.Option("claude-sonnet-4-6", "--model"),
+    extractor: str = typer.Option(
+        "haiku",
+        "--extractor",
+        help="LLM model used for press-release / LinkedIn extraction in leadership_stability. "
+             "Choices: haiku (default), gemini-flash. gemini-flash requires GEMINI_API_KEY.",
+    ),
+    pdl_cost_cap: float = typer.Option(
+        5.0, "--pdl-cost-cap",
+        help="Hard ceiling on PDL spend per X-Ray, in USD.",
+    ),
+    no_pdl: bool = typer.Option(
+        False, "--no-pdl",
+        help="Disable PDL enrichment entirely for this run.",
+    ),
 ):
     """Full pipeline: collect -> synthesize -> render."""
     config = _build_config(
         domain=domain, company_name=company_name, output_dir=output_dir,
         skip_modules=[s.strip() for s in skip_modules.split(",") if s.strip()],
         mode=mode, use_cache=use_cache, dry_run=dry_run, model=model,
+        extractor_model=extractor,
+        pdl_cost_cap_dollars=pdl_cost_cap,
+        no_pdl=no_pdl,
     )
     if config.dry_run:
         _print_dry_run_plan(config)

@@ -68,3 +68,56 @@ def test_empty_env_var_with_no_dotenv_leaves_key_unset(monkeypatch, tmp_path):
     # Either None or absent; what matters is that empty SecretStr does not slip through
     if c.anthropic_api_key is not None:
         assert c.anthropic_api_key.get_secret_value() != ""
+
+
+def test_extractor_model_default_haiku():
+    from rrxray.config import Config
+    c = Config(domain="example.com")
+    assert c.extractor_model == "haiku"
+
+
+def test_extractor_model_can_be_gemini_flash():
+    from rrxray.config import Config
+    c = Config(domain="example.com", extractor_model="gemini-flash")
+    assert c.extractor_model == "gemini-flash"
+
+
+def test_extractor_model_rejects_invalid():
+    import pytest
+    from pydantic import ValidationError
+
+    from rrxray.config import Config
+    with pytest.raises(ValidationError):
+        Config(domain="example.com", extractor_model="claude-opus")
+
+
+def test_pdl_api_key_loaded_from_env(monkeypatch):
+    monkeypatch.setenv("PDL_API_KEY", "test-pdl-key")
+    from rrxray.config import Config
+    c = Config(domain="example.com")
+    assert c.pdl_api_key is not None
+    assert c.pdl_api_key.get_secret_value() == "test-pdl-key"
+
+
+def test_pdl_cost_cap_dollars_default_five():
+    from rrxray.config import Config
+    c = Config(domain="example.com")
+    assert c.pdl_cost_cap_dollars == 5.0
+
+
+def test_pdl_cost_cap_dollars_overridable():
+    from rrxray.config import Config
+    c = Config(domain="example.com", pdl_cost_cap_dollars=10.0)
+    assert c.pdl_cost_cap_dollars == 10.0
+
+
+def test_no_pdl_default_false():
+    from rrxray.config import Config
+    c = Config(domain="example.com")
+    assert c.no_pdl is False
+
+
+def test_no_pdl_overridable():
+    from rrxray.config import Config
+    c = Config(domain="example.com", no_pdl=True)
+    assert c.no_pdl is True

@@ -49,6 +49,8 @@ class Config(BaseSettings):
     anthropic_api_key: SecretStr | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     firecrawl_api_key: SecretStr | None = Field(default=None, alias="FIRECRAWL_API_KEY")
     gamma_api_key: SecretStr | None = Field(default=None, alias="GAMMA_API_KEY")
+    gemini_api_key: SecretStr | None = Field(default=None, alias="GEMINI_API_KEY")
+    pdl_api_key: SecretStr | None = Field(default=None, alias="PDL_API_KEY")
 
     # Required runtime
     domain: str
@@ -62,6 +64,9 @@ class Config(BaseSettings):
     use_cache: bool = True
     dry_run: bool = False
     model: str = "claude-sonnet-4-6"
+    extractor_model: Literal["haiku", "gemini-flash"] = "haiku"
+    pdl_cost_cap_dollars: float = 5.0
+    no_pdl: bool = False
 
     # Cache
     cache_dir: Path = Path.home() / ".rrxray" / "cache"
