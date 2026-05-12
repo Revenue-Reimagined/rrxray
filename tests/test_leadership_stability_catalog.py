@@ -31,17 +31,46 @@ def test_thresholds_are_sensible():
     assert RECENT_THRESHOLD_DAYS == 270
 
 
-def test_role_titles_are_pdl_search_alternatives():
-    """Each role canonical maps to a non-empty list of plain role-title strings
-    (used as OR alternatives in PDL Person Search). No quote characters; the
-    PDL search builder wraps them itself.
+def test_role_specs_are_pdl_es_dsl_specs():
+    """Each role canonical maps to a PDL ES-DSL search spec dict with at least
+    one of `role`, `levels`, or `title_keywords`. List values must be
+    non-empty lowercase strings. The PDL client wraps title_keywords as
+    wildcard clauses itself, so entries must be plain (no `*` characters).
     """
-    for canonical, titles in LEADERSHIP_ROLES:
-        assert isinstance(titles, list), f"{canonical}: titles must be a list, got {type(titles).__name__}"
-        assert titles, f"{canonical}: titles list must be non-empty"
-        for t in titles:
-            assert isinstance(t, str) and t, f"{canonical}: title entries must be non-empty strings"
-            assert '"' not in t, f"{canonical}: PDL titles are plain (not pre-quoted): {t!r}"
+    valid_keys = {"role", "levels", "title_keywords"}
+    for canonical, spec in LEADERSHIP_ROLES:
+        assert isinstance(spec, dict), (
+            f"{canonical}: spec must be a dict, got {type(spec).__name__}"
+        )
+        # At least one filter clause; otherwise PDL would return all-people-at-company.
+        assert any(k in spec for k in valid_keys), (
+            f"{canonical}: spec must have at least one of {valid_keys}; got {spec!r}"
+        )
+        if "role" in spec:
+            assert isinstance(spec["role"], str) and spec["role"], (
+                f"{canonical}: spec['role'] must be a non-empty string"
+            )
+        if "levels" in spec:
+            levels = spec["levels"]
+            assert isinstance(levels, list) and levels, (
+                f"{canonical}: spec['levels'] must be a non-empty list"
+            )
+            for lv in levels:
+                assert isinstance(lv, str) and lv, (
+                    f"{canonical}: level entries must be non-empty strings"
+                )
+        if "title_keywords" in spec:
+            kws = spec["title_keywords"]
+            assert isinstance(kws, list) and kws, (
+                f"{canonical}: spec['title_keywords'] must be a non-empty list"
+            )
+            for kw in kws:
+                assert isinstance(kw, str) and kw, (
+                    f"{canonical}: title_keyword entries must be non-empty strings"
+                )
+                assert "*" not in kw, (
+                    f"{canonical}: title_keywords are plain substrings, not wildcards: {kw!r}"
+                )
 
 
 def test_founded_year_patterns_match_common_phrasings():

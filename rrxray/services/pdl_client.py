@@ -80,38 +80,47 @@ class PDLClient:
     async def search_people(
         self,
         company_domain: str,
-        role_titles: list[str],
+        search_spec: dict[str, Any],
         size: int = 3,
     ) -> list[PDLSearchResult]:
-        """Person Search by (company_domain, role_titles). Returns ranked matches.
+        """Person Search by (company_domain, search_spec). Returns ranked matches.
 
-        Caches by (company_domain, role_titles_sorted, size); 30-day TTL via DiskCache.
+        search_spec is a dict with up to three optional keys:
+          - role: exact `job_title_role` (e.g. "sales", "marketing")
+          - levels: list of `job_title_levels` (e.g. ["cxo"], ["vp"])
+          - title_keywords: list of lowercase substrings — each wrapped as
+            `*<keyword>*` and OR'd as wildcard clauses on `job_title`
+
+        At least one of these keys must be present (empty spec rejected to
+        avoid degenerate "all people at company" queries that burn budget).
+
+        Caches by (company_domain, search_spec, size); 30-day TTL via DiskCache.
         Raises PDLError on terminal SDK failure (200-no-match is NOT an error).
-        Raises PDLError if any input contains a single quote (SQL-injection guard).
         """
-        # SQL-injection guard: company_domain is user-controlled (--domain) and
-        # role_titles flow from internal catalog but defense-in-depth still
-        # applies. SQL is built via interpolation in _build_search_call;
-        # reject any single-quote input so the query stays bounded.
-        if "'" in company_domain:
+        # Reject empty spec — would otherwise return every person at the
+        # company, defeating the role-targeted budget model.
+        if not any(k in search_spec for k in ("role", "levels", "title_keywords")):
             raise PDLError(
-                f"search_people: company_domain contains disallowed character (single quote): {company_domain!r}",
+                "search spec must have at least one of role/levels/title_keywords",
             )
-        for title in role_titles:
-            if "'" in title:
-                raise PDLError(
-                    f"search_people: role title contains disallowed character (single quote): {title!r}",
-                )
 
+        # PDL indexes job_company_website lowercased; normalize so callers
+        # passing mixed-case domains still match.
+        domain_lower = company_domain.lower()
+
+        # Cache key includes the canonicalized spec so two calls with the
+        # same logical query share the entry.
         args = {
-            "domain": company_domain,
-            "titles": sorted(role_titles),
+            "domain": domain_lower,
+            "spec": _canonicalize_spec(search_spec),
             "size": size,
         }
 
         async def upstream() -> dict[str, Any]:
             try:
-                response = await asyncio.to_thread(self._build_search_call, company_domain, role_titles, size)
+                response = await asyncio.to_thread(
+                    self._build_search_call, domain_lower, search_spec, size,
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -143,15 +152,46 @@ class PDLClient:
             ))
         return results
 
-    def _build_search_call(self, company_domain: str, role_titles: list[str], size: int) -> dict[str, Any]:
-        """Synchronous SDK call wrapped by asyncio.to_thread. Builds SQL filter for PDL Search."""
-        # PDL Search uses SQL-style WHERE clauses on indexed fields.
-        title_clause = " OR ".join(f"job_title='{t}'" for t in role_titles)
-        sql = (
-            f"SELECT * FROM person WHERE job_company_website='{company_domain}' "
-            f"AND ({title_clause})"
-        )
-        response = self._sdk.person.search(sql=sql, size=size, pretty=True)
+    def _build_search_call(
+        self, company_domain: str, search_spec: dict[str, Any], size: int,
+    ) -> dict[str, Any]:
+        """Synchronous SDK call wrapped by asyncio.to_thread.
+
+        Builds a PDL Elasticsearch DSL query from `search_spec`:
+          - company_domain → `term: job_company_website`
+          - spec["role"] → `term: job_title_role`
+          - spec["levels"] → `terms: job_title_levels`
+          - spec["title_keywords"] → nested `bool/should` of wildcard clauses
+            on `job_title`, each wrapped as `*<keyword>*`
+
+        SQL was the previous path; PDL's SQL adapter does exact-match on
+        the lowercased written title (e.g. "vice president of sales"), not
+        on canonical role/level fields, which produced 0 hits for titles
+        like "VP Sales". ES DSL hits the indexed classification fields
+        directly.
+        """
+        must_clauses: list[dict[str, Any]] = [
+            {"term": {"job_company_website": company_domain}},
+        ]
+
+        role = search_spec.get("role")
+        if role:
+            must_clauses.append({"term": {"job_title_role": role}})
+
+        levels = search_spec.get("levels")
+        if levels:
+            must_clauses.append({"terms": {"job_title_levels": list(levels)}})
+
+        title_keywords = search_spec.get("title_keywords")
+        if title_keywords:
+            should_clauses = [
+                {"wildcard": {"job_title": f"*{kw.lower()}*"}}
+                for kw in title_keywords
+            ]
+            must_clauses.append({"bool": {"should": should_clauses}})
+
+        es_query = {"bool": {"must": must_clauses}}
+        response = self._sdk.person.search(query=es_query, size=size, pretty=True)
         return response.json()
 
     async def enrich_person(
@@ -246,3 +286,19 @@ class PDLClient:
             params["company"] = company_domain
         response = self._sdk.person.enrichment(**params)
         return response.json()
+
+
+def _canonicalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    """Canonicalize a search_spec dict for stable cache-key hashing.
+
+    list-typed values (levels, title_keywords) are sorted so two callers
+    passing the same set in different orders share the cache entry.
+    """
+    canon: dict[str, Any] = {}
+    if "role" in spec:
+        canon["role"] = spec["role"]
+    if "levels" in spec:
+        canon["levels"] = sorted(list(spec["levels"]))
+    if "title_keywords" in spec:
+        canon["title_keywords"] = sorted(list(spec["title_keywords"]))
+    return canon

@@ -44,7 +44,7 @@ def test_search_people_returns_search_results(client, fake_sdk):
 
     results = asyncio.run(client.search_people(
         company_domain="acme.com",
-        role_titles=["CRO", "Chief Revenue Officer"],
+        search_spec={"role": "sales", "levels": ["cxo"]},
         size=3,
     ))
 
@@ -56,12 +56,12 @@ def test_search_people_returns_search_results(client, fake_sdk):
     assert results[0].match_score == 0.94
 
 
-def test_search_people_caches_by_company_and_role(client, fake_sdk):
+def test_search_people_caches_by_company_and_spec(client, fake_sdk):
     response = _load_fixture("pdl_search_cro_response.json")
     fake_sdk.person.search.return_value = MagicMock(json=lambda: response, status_code=200)
 
-    asyncio.run(client.search_people("acme.com", ["CRO"]))
-    asyncio.run(client.search_people("acme.com", ["CRO"]))
+    asyncio.run(client.search_people("acme.com", {"role": "sales", "levels": ["cxo"]}))
+    asyncio.run(client.search_people("acme.com", {"role": "sales", "levels": ["cxo"]}))
 
     assert fake_sdk.person.search.call_count == 1
 
@@ -70,15 +70,139 @@ def test_search_people_raises_on_sdk_error(client, fake_sdk):
     fake_sdk.person.search.side_effect = RuntimeError("simulated SDK failure")
 
     with pytest.raises(PDLError):
-        asyncio.run(client.search_people("acme.com", ["CRO"]))
+        asyncio.run(client.search_people("acme.com", {"role": "sales", "levels": ["cxo"]}))
 
 
 def test_search_people_handles_empty_match(client, fake_sdk):
     response = _load_fixture("pdl_search_no_match_response.json")
     fake_sdk.person.search.return_value = MagicMock(json=lambda: response, status_code=200)
 
-    results = asyncio.run(client.search_people("obscure.com", ["CRO"]))
+    results = asyncio.run(client.search_people("obscure.com", {"role": "sales", "levels": ["cxo"]}))
     assert results == []
+
+
+def test_search_people_builds_es_dsl_with_role_and_levels(client, fake_sdk):
+    """Spec with `role` + `levels` must produce a bool/must ES DSL query with
+    job_company_website + job_title_role + job_title_levels term/terms clauses
+    and pass it to the SDK as `query=<dict>`."""
+    response = _load_fixture("pdl_search_no_match_response.json")
+    fake_sdk.person.search.return_value = MagicMock(json=lambda: response, status_code=200)
+
+    asyncio.run(client.search_people(
+        company_domain="swayable.com",
+        search_spec={"role": "sales", "levels": ["vp"]},
+        size=3,
+    ))
+
+    fake_sdk.person.search.assert_called_once()
+    kwargs = fake_sdk.person.search.call_args.kwargs
+    assert "query" in kwargs, f"SDK call must pass `query=<dict>`; got kwargs={kwargs}"
+    assert "sql" not in kwargs, "SQL query path must be removed"
+    query = kwargs["query"]
+    assert query == {
+        "bool": {
+            "must": [
+                {"term": {"job_company_website": "swayable.com"}},
+                {"term": {"job_title_role": "sales"}},
+                {"terms": {"job_title_levels": ["vp"]}},
+            ],
+        },
+    }
+    assert kwargs.get("size") == 3
+    assert kwargs.get("pretty") is True
+
+
+def test_search_people_builds_es_dsl_with_levels_only(client, fake_sdk):
+    """A spec with only `levels` (e.g. CEO disambiguated solely by title_keywords)
+    must omit the role clause."""
+    response = _load_fixture("pdl_search_no_match_response.json")
+    fake_sdk.person.search.return_value = MagicMock(json=lambda: response, status_code=200)
+
+    asyncio.run(client.search_people(
+        company_domain="acme.com",
+        search_spec={"levels": ["cxo"]},
+        size=5,
+    ))
+
+    query = fake_sdk.person.search.call_args.kwargs["query"]
+    assert query == {
+        "bool": {
+            "must": [
+                {"term": {"job_company_website": "acme.com"}},
+                {"terms": {"job_title_levels": ["cxo"]}},
+            ],
+        },
+    }
+
+
+def test_search_people_builds_es_dsl_with_title_keywords_only(client, fake_sdk):
+    """A spec with `title_keywords` only (e.g. founder, which classifies
+    unevenly across levels) must produce a nested bool/should with wildcard
+    clauses on job_title — each keyword wrapped as `*<lowercase>*`."""
+    response = _load_fixture("pdl_search_no_match_response.json")
+    fake_sdk.person.search.return_value = MagicMock(json=lambda: response, status_code=200)
+
+    asyncio.run(client.search_people(
+        company_domain="acme.com",
+        search_spec={"title_keywords": ["founder", "co-founder"]},
+        size=3,
+    ))
+
+    query = fake_sdk.person.search.call_args.kwargs["query"]
+    assert query == {
+        "bool": {
+            "must": [
+                {"term": {"job_company_website": "acme.com"}},
+                {"bool": {"should": [
+                    {"wildcard": {"job_title": "*founder*"}},
+                    {"wildcard": {"job_title": "*co-founder*"}},
+                ]}},
+            ],
+        },
+    }
+
+
+def test_search_people_builds_es_dsl_with_all_three_fields(client, fake_sdk):
+    """Full spec: role + levels + title_keywords (e.g. vp_revenue narrowing
+    inside the vp/sales bucket)."""
+    response = _load_fixture("pdl_search_no_match_response.json")
+    fake_sdk.person.search.return_value = MagicMock(json=lambda: response, status_code=200)
+
+    asyncio.run(client.search_people(
+        company_domain="acme.com",
+        search_spec={"role": "sales", "levels": ["vp"], "title_keywords": ["revenue"]},
+        size=3,
+    ))
+
+    query = fake_sdk.person.search.call_args.kwargs["query"]
+    assert query == {
+        "bool": {
+            "must": [
+                {"term": {"job_company_website": "acme.com"}},
+                {"term": {"job_title_role": "sales"}},
+                {"terms": {"job_title_levels": ["vp"]}},
+                {"bool": {"should": [
+                    {"wildcard": {"job_title": "*revenue*"}},
+                ]}},
+            ],
+        },
+    }
+
+
+def test_search_people_lowercases_company_domain(client, fake_sdk):
+    """PDL indexes job_company_website lowercased; pass-through must do
+    the same so a domain entered as "Swayable.COM" still matches."""
+    response = _load_fixture("pdl_search_no_match_response.json")
+    fake_sdk.person.search.return_value = MagicMock(json=lambda: response, status_code=200)
+
+    asyncio.run(client.search_people(
+        company_domain="Swayable.COM",
+        search_spec={"levels": ["cxo"]},
+    ))
+
+    query = fake_sdk.person.search.call_args.kwargs["query"]
+    domain_clause = query["bool"]["must"][0]
+    assert domain_clause == {"term": {"job_company_website": "swayable.com"}}
 
 
 def test_enrich_person_by_linkedin_url(client, fake_sdk):
@@ -151,7 +275,7 @@ def test_sdk_exception_does_not_leak_api_key_in_search(client, fake_sdk, caplog)
         pytest.raises(PDLError) as exc_info,
         caplog.at_level("WARNING", logger="rrxray.pdl"),
     ):
-        asyncio.run(client.search_people("acme.com", ["CRO"]))
+        asyncio.run(client.search_people("acme.com", {"role": "sales", "levels": ["cxo"]}))
 
     assert api_key not in str(exc_info.value), (
         f"PDLError message leaked api_key: {exc_info.value}"
@@ -184,27 +308,23 @@ def test_sdk_exception_does_not_leak_api_key_in_enrich(client, fake_sdk, caplog)
     )
 
 
-def test_search_people_rejects_single_quote_in_company_domain(client, fake_sdk):
-    """company_domain flows from --domain (user-controlled). A domain
-    containing a single quote could alter the SQL query (injection).
-    PDLClient must reject such input."""
-    with pytest.raises(PDLError):
-        asyncio.run(client.search_people("acme.com' OR job_title='%", ["CRO"]))
-
-
-def test_search_people_rejects_single_quote_in_role_titles(client, fake_sdk):
-    """Same SQL-injection guard for role titles."""
-    with pytest.raises(PDLError):
-        asyncio.run(client.search_people("acme.com", ["CRO' OR 1='1"]))
-
-
 def test_search_people_allows_valid_input(client, fake_sdk):
-    """Sanity check: valid domain and titles don't trip the guard."""
+    """Sanity check: a valid domain + spec produces a successful search."""
     response = _load_fixture("pdl_search_cro_response.json")
     fake_sdk.person.search.return_value = MagicMock(json=lambda: response, status_code=200)
 
-    results = asyncio.run(client.search_people("acme.com", ["CRO"]))
+    results = asyncio.run(client.search_people(
+        "acme.com", {"role": "sales", "levels": ["cxo"]},
+    ))
     assert len(results) == 2
+
+
+def test_search_people_rejects_empty_spec(client, fake_sdk):
+    """A spec with no filtering clauses (no role / levels / title_keywords)
+    would degenerate to "all people at company_domain", which is too broad
+    and burns budget. Reject it."""
+    with pytest.raises(PDLError):
+        asyncio.run(client.search_people("acme.com", {}))
 
 
 def test_enrich_person_sorts_experience_reverse_chrono_for_previous_companies(client, fake_sdk):

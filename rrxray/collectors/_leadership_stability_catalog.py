@@ -5,17 +5,89 @@ catalog data is deterministic.
 """
 from __future__ import annotations
 
-# (canonical, PDL role-title alternatives)
-# Used as `role_canonicals` argument to LeadershipEnrichment.find_and_enrich_incumbents;
-# each list of titles becomes an OR'd title clause in the PDL Person Search query.
-LEADERSHIP_ROLES: list[tuple[str, list[str]]] = [
-    ("ceo",          ["CEO", "Chief Executive Officer"]),
-    ("cro",          ["CRO", "Chief Revenue Officer"]),
-    ("vp_sales",     ["VP Sales", "VP of Sales", "Head of Sales"]),
-    ("vp_revenue",   ["VP Revenue", "VP of Revenue", "Head of Revenue"]),
-    ("cmo",          ["CMO", "Chief Marketing Officer"]),
-    ("vp_marketing", ["VP Marketing", "VP of Marketing", "Head of Marketing"]),
-    ("founder",      ["Founder", "Co-founder", "Co-Founder"]),
+from typing import Any
+
+# (canonical, PDL ES-DSL search spec)
+# Each search_spec dict has up to three optional keys, consumed by
+# PDLClient._build_search_call to construct an Elasticsearch DSL query:
+#   - "role":  exact `job_title_role` (e.g. "sales", "marketing")
+#   - "levels": list of `job_title_levels` (e.g. ["cxo"], ["vp"], ["owner", "partner"])
+#   - "title_keywords": list of lowercase substrings — each is wrapped as
+#                       `*<keyword>*` and OR'd as wildcard clauses on
+#                       `job_title`. Used to disambiguate among candidates
+#                       that share role+level (e.g. CRO vs CMO at `cxo`,
+#                       VP Revenue vs VP Sales at `sales/vp`).
+#
+# Why ES DSL and not SQL: PDL Search SQL is exact-match on lowercased
+# `job_title`, which produced 0 results for canonical titles like
+# "VP Sales" because PDL stores the lowercased written form ("vice
+# president of sales"). The classification taxonomy (role + levels) plus
+# wildcard title-narrowing matches PDL's actual indexing pattern.
+LEADERSHIP_ROLES: list[tuple[str, dict[str, Any]]] = [
+    # CEO: cxo level; title contains "chief executive" or "ceo".
+    # (CEOs classify across role buckets — leave role unset and rely on
+    #  level + title keywords to disambiguate from other C-suite hits.)
+    (
+        "ceo",
+        {
+            "levels": ["cxo"],
+            "title_keywords": ["chief executive", "ceo"],
+        },
+    ),
+    # CRO: cxo level; title contains "chief revenue" or "cro".
+    # (Many CROs classify as `sales`, but some don't — relax to level-only
+    #  with title keywords for resilience.)
+    (
+        "cro",
+        {
+            "levels": ["cxo"],
+            "title_keywords": ["chief revenue", "cro"],
+        },
+    ),
+    # VP Sales: sales role + vp level. Broad: catches "VP Sales", "VP of
+    # Sales", "Head of Sales", "Vice President of Sales".
+    (
+        "vp_sales",
+        {
+            "role": "sales",
+            "levels": ["vp"],
+        },
+    ),
+    # VP Revenue: sales role + vp level + "revenue" in the title (narrows
+    # VP Sales bucket down to revenue-titled VPs).
+    (
+        "vp_revenue",
+        {
+            "role": "sales",
+            "levels": ["vp"],
+            "title_keywords": ["revenue"],
+        },
+    ),
+    # CMO: marketing role + cxo level. Title narrowing optional; the
+    # role+level combo is already tight.
+    (
+        "cmo",
+        {
+            "role": "marketing",
+            "levels": ["cxo"],
+        },
+    ),
+    # VP Marketing: marketing role + vp level.
+    (
+        "vp_marketing",
+        {
+            "role": "marketing",
+            "levels": ["vp"],
+        },
+    ),
+    # Founder: classifies unevenly across levels (cxo / owner / partner /
+    # unclassified) — drop the level filter and rely on title keywords.
+    (
+        "founder",
+        {
+            "title_keywords": ["founder", "co-founder"],
+        },
+    ),
 ]
 
 

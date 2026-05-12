@@ -8,7 +8,7 @@ path); both share the orchestrator's spend counter.
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -81,9 +81,13 @@ class LeadershipEnrichment:
         self,
         company_name: str,
         company_domain: str,
-        role_canonicals: list[tuple[str, list[str]]],
+        role_canonicals: list[tuple[str, dict[str, Any]]],
     ) -> EnrichedLeadership:
         """Per role: PDL Search → take top match by score → PDL Enrich by linkedin_url.
+
+        `role_canonicals` is the LEADERSHIP_ROLES catalog: a list of
+        `(canonical, search_spec)` tuples where `search_spec` is the ES-DSL
+        spec dict passed through to PDLClient.search_people.
 
         Dedup across roles by linkedin_url (founder appearing as CEO + Founder is one Enrich call).
         Per-role failures isolated (logged, continues). Returns whatever was gathered.
@@ -92,12 +96,12 @@ class LeadershipEnrichment:
         # Track linkedin_url → PDLEnrichment so we only enrich the same person once
         enrichment_cache: dict[str, PDLEnrichment | None] = {}
 
-        for role_canonical, role_titles in role_canonicals:
+        for role_canonical, search_spec in role_canonicals:
             if not self._can_spend(PDL_COST_PER_SEARCH):
                 break
 
             try:
-                results = await self.pdl.search_people(company_domain, role_titles, size=3)
+                results = await self.pdl.search_people(company_domain, search_spec, size=3)
                 self._record_success(PDL_COST_PER_SEARCH)
             except PDLError as e:
                 log.warning("PDL search failed for role=%s: %s", role_canonical, e)
