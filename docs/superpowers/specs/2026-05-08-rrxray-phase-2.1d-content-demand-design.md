@@ -1,9 +1,11 @@
 # rrxray Phase 2.1d: content_demand Collector Design
 
-**Date:** 2026-05-08
-**Status:** Approved (brainstorming complete)
+**Date:** 2026-05-08 (refreshed 2026-05-13 for state drift; design unchanged)
+**Status:** Approved (brainstorming complete; refreshed post-Phase-2.2 for current test baseline + quality-gate domains)
 **Phase:** 2.1d (fourth sub-phase inside Phase 2; closes Section A)
-**Builds on:** Phase 2.1c `revenue_motion` collector (commit `97e1d1c`) merged into `main` (commit `de297bf`)
+**Builds on:** Phase 2.1c `revenue_motion` collector (commit `97e1d1c`) merged into `main` (commit `de297bf`). Phase 2.2 + 2.2-deep (`leadership_stability` + PDL enrichment) also shipped before this phase started; they are independent (Section B) and do not interact with content_demand.
+
+**Implementer model assignments:** Per the CLAUDE.md model-selection matrix added after this spec was first written: real-logic implementer tasks → Opus 4.7; mechanical implementer tasks (schemas, fixtures, pipeline registration, catalog declaration) → Haiku 4.5; reviewers (spec compliance + code quality) → Haiku 4.5; final whole-branch review → Opus 4.7. The implementation plan should encode these choices per-task.
 
 ---
 
@@ -45,7 +47,7 @@ This phase is structurally identical to Phase 2.1c: new collector module, new sc
 - Fourth conditional block in `rrxray/prompts/observed_gtm_motion.md` plus framework-guidance bullets for content-posture interpretation
 - Synthesizer body updated to read `content_demand` from `collector_outputs` and pass to the prompt renderer
 - Synthetic-HTML fixture tests (no live API calls in unit tests)
-- Quality gate: 3-domain smoke against Swayable / SQA Services / Linear plus Dale-led prompt review
+- Quality gate: 3-domain smoke against Swayable + Healthicity (RR target ICP sign-off bar) + Linear (regression check for PLG / dense-content shape) plus Dale-led prompt review
 
 ### Out of scope (future cycles)
 
@@ -70,7 +72,7 @@ This phase is structurally identical to Phase 2.1c: new collector module, new sc
 | Schema shape | Two typed list models (`BlogPost`, `LeadMagnet`) plus flat fields for podcast and newsletter on `ContentDemandData` | Lean: podcast/newsletter are 0-or-1 per domain; typed lists with one element are overkill |
 | Lead-magnet detection scope | Homepage + blog index only; do NOT follow gated CTAs | Detect-presence is enough; following landing pages adds cost without proportional signal |
 | Cross-signal integration | Add fourth `{% if content_demand %}` conditional block to existing Section A prompt; one-line synthesizer body update | Mirrors Phase 2.1c integration; N-collector-agnostic refactor is wider blast radius for marginal benefit |
-| Quality gate | Dale-led review against Swayable, SQA Services, Linear (same domains as Phases 2.1b/2.1c) | Apples-to-apples comparison; same domains across phases lets us isolate the marginal value of the new signal |
+| Quality gate | Dale-led review against Swayable + Healthicity (RR target ICP sign-off bar) + Linear (regression check) | Aligns with the ICP-discipline pattern set by Phase 2.2-deep: Swayable-shaped (small B2B, sparse signal) is the sign-off bar; Linear-shaped is regression-only. Healthicity replaces SQA Services as the second ICP-shaped sign-off domain. |
 
 ---
 
@@ -443,7 +445,7 @@ LLM produces Section A narrative reading across pricing + tech_stack + revenue_m
 - Synthesizer test additions — `test_synth_runs_with_four_collectors`, `test_synth_runs_with_content_demand_only` (~2 tests)
 - Render test additions — `test_content_demand_module_detail_renders_with_posts`, `test_content_demand_module_detail_omits_when_no_collector` (~2 tests)
 
-**Total: ~47 new tests.** Suite goes from 251 → ~298.
+**Total: ~47 new tests.** Suite goes from 393 → ~440 (baseline updated post-Phase-2.2-deep merge; original 251 baseline was from the pre-Phase-2.2 state when this spec was first drafted).
 
 ### Synthetic fixtures
 
@@ -475,14 +477,14 @@ LLM produces Section A narrative reading across pricing + tech_stack + revenue_m
 | 10 | `data.json` round-trips with `content_demand` populated | existing `test_data_json_round_trips` |
 | 11 | Module Detail Appendix renders Content Demand subsection | `test_content_demand_module_detail_*` |
 | 12 | Synthesizer reads `content_demand` from `collector_outputs` and includes it in the user message | `test_synth_runs_with_four_collectors` |
-| 13 | Live smoke against Swayable / SQA / Linear produces a Section A narrative referencing content posture | manual review (Dale-led quality gate) |
+| 13 | Live smoke against Swayable + Healthicity + Linear produces a Section A narrative referencing content posture; Swayable + Healthicity must be diagnostic, Linear is regression-only | manual review (Dale-led quality gate) |
 | 14 | Quality gate signed off by Dale | manual review |
 
 ---
 
 ## Risks and known limitations
 
-- **Blog parsing heterogeneity.** Blogs use wildly different HTML conventions: WordPress, Ghost, custom, Webflow, Notion-as-blog, Medium-hosted. Title extraction via anchor tags is reliable; date and author extraction is best-effort and will fail silently on some platforms. Mitigation: comprehensive smoke testing against three different blog platforms during the quality gate (Swayable likely Webflow; SQA likely WordPress; Linear likely custom Next.js).
+- **Blog parsing heterogeneity.** Blogs use wildly different HTML conventions: WordPress, Ghost, custom, Webflow, Notion-as-blog, Medium-hosted. Title extraction via anchor tags is reliable; date and author extraction is best-effort and will fail silently on some platforms. Mitigation: comprehensive smoke testing against three different blog platforms during the quality gate (Swayable likely Webflow; Healthicity likely WordPress/Marketo-shaped; Linear likely custom Next.js).
 - **Lead-magnet CTA-text heuristic will miss some.** Buttons that just say "Download" or use icon-only CTAs won't match the keyword patterns. Mitigation: cap is 10 per domain, so missing a few is acceptable; the diagnostic question is "are they running a funnel?", not "exactly how many magnets do they have?"
 - **Podcast detection misses self-hosted RSS without standard `<link rel>`.** Some companies host their own RSS feed without putting a discovery link in the HTML head. Mitigation: try `/podcast` path as a fallback. Defer richer detection to Phase 2.1d-deep.
 - **Newsletter embedded-form heuristic will produce false positives.** Any site with a footer email signup will trigger it. Mitigation: require button text to match `subscribe|newsletter|sign up` keywords (not just any submit button); accept the residual false positive rate as "newsletter-shaped intent" rather than "definitely a newsletter."
@@ -494,7 +496,7 @@ LLM produces Section A narrative reading across pricing + tech_stack + revenue_m
 
 ## Out of scope but accommodated by the design
 
-- Phase 2.2's `leadership_stability` collector ships in parallel; it operates on a different signal area (Section B) and does not interact with content_demand.
+- Phase 2.2's `leadership_stability` collector and Phase 2.2-deep's PDL enrichment shipped before this phase; they operate on a different signal area (Section B) and do not interact with content_demand. The Section B synthesizer (`observed_stability_trajectory`) is a sibling of the Section A synthesizer being extended here; the two are independent.
 - Future Phase 2.1d-deep additions (Wayback cadence trajectory, per-post body parsing) can extend `ContentDemandData` with additional fields and add separate sub-step methods to the collector without touching the schema's existing fields.
 - Phase 3's Gemini integration treats `content_demand` as just another collector output. No special-case wiring.
 
