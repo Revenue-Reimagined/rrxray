@@ -101,3 +101,55 @@ def test_discover_blog_url_returns_none_when_nothing_found(tmp_path):
     url, page = asyncio.run(content_demand._discover_blog_url(ctx))
     assert url is None
     assert page is None
+
+
+def test_parse_blog_posts_extracts_titles_and_urls():
+    html = _load("blog_simple.html")
+    posts = content_demand._parse_blog_posts(html, base_url="https://acme.com")
+    titles = [p.title for p in posts]
+    assert "The Future of Revenue Ops" in titles
+    assert "10 ways to close more deals" in titles
+    # URLs resolved against base_url
+    first = next(p for p in posts if p.title == "The Future of Revenue Ops")
+    assert first.url == "https://acme.com/blog/the-future-of-revenue"
+
+
+def test_parse_blog_posts_extracts_dates_when_present():
+    html = _load("blog_simple.html")
+    posts = content_demand._parse_blog_posts(html, base_url="https://acme.com")
+    dated = next(p for p in posts if p.title == "The Future of Revenue Ops")
+    assert dated.published_date == "2026-04-15"
+
+
+def test_parse_blog_posts_handles_missing_dates_gracefully():
+    html = _load("blog_no_dates.html")
+    posts = content_demand._parse_blog_posts(html, base_url="https://acme.com")
+    assert len(posts) >= 3
+    assert all(p.published_date is None for p in posts)
+
+
+def test_parse_blog_posts_caps_at_fifteen():
+    """Build a synthetic blog with 25 posts; only first 15 should be returned."""
+    parts = ["<html><body>"]
+    for i in range(25):
+        parts.append(f'<article><a href="/blog/post-{i}">Post {i}</a></article>')
+    parts.append("</body></html>")
+    html = "".join(parts)
+    posts = content_demand._parse_blog_posts(html, base_url="https://acme.com")
+    assert len(posts) == 15
+
+
+def test_parse_blog_posts_returns_empty_for_html_with_no_links():
+    posts = content_demand._parse_blog_posts(
+        "<html><body><p>No posts yet</p></body></html>",
+        base_url="https://acme.com",
+    )
+    assert posts == []
+
+
+def test_parse_blog_posts_preserves_document_order():
+    html = _load("blog_simple.html")
+    posts = content_demand._parse_blog_posts(html, base_url="https://acme.com")
+    titles = [p.title for p in posts]
+    # blog_simple.html lists "The Future of Revenue Ops" first
+    assert titles[0] == "The Future of Revenue Ops"
