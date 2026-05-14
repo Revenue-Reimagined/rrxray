@@ -646,3 +646,40 @@ def test_module_detail_renders_enrichment_metadata_line():
 
     assert "$2.83" in rendered or "2.83" in rendered
     assert "cost_cap" in rendered
+
+
+def test_content_demand_module_detail_renders_with_posts():
+    from rrxray.schemas.content_demand import BlogPost, ContentDemandData, LeadMagnet
+
+    cd = ContentDemandData(
+        blog_index_url="https://example.com/blog",
+        blog_posts=[
+            BlogPost(title="The Future of Revenue", category="thought_leadership",
+                     published_date="2026-04-15"),
+            BlogPost(title="10 ways to close more deals", category="seo_listicle"),
+        ],
+        post_counts_by_category={"thought_leadership": 1, "seo_listicle": 1},
+        most_recent_post_date="2026-04-15",
+        lead_magnets=[
+            LeadMagnet(title="The 2026 Playbook", asset_type="ebook",
+                       source_page="homepage", has_form_gate=True),
+        ],
+        podcast_platform="apple_podcasts",
+        podcast_name="The Revenue Show",
+        newsletter_platform="substack",
+        newsletter_archive_url="https://example.substack.com",
+    )
+    data = make_data()
+    data.collectors.content_demand = cd
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "### Content Demand" in out
+    assert "The Future of Revenue" in out
+    assert "The 2026 Playbook" in out
+    assert "apple_podcasts" in out
+    assert "substack" in out
+
+
+def test_content_demand_module_detail_omits_when_no_collector():
+    data = make_data()
+    out = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "### Content Demand" not in out

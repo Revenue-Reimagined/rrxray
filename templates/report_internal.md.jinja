@@ -96,6 +96,12 @@
 {% include "_revenue_motion_detail.md.jinja" %}
 {% endif %}
 
+{% if data.collectors.content_demand %}
+### Content Demand
+
+{% include "_content_demand_detail.md.jinja" %}
+{% endif %}
+
 {% if data.collectors.leadership_stability %}
 ### Leadership Stability
 
