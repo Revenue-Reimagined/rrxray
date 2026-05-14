@@ -211,3 +211,52 @@ def test_categorize_post_specificity_order_seo_beats_thought_leadership():
     """A title with both 'top 10' and 'the future of' should match seo_listicle (more specific, first in catalog)."""
     cat, _ = content_demand._categorize_post("Top 10 takes on the future of sales", "")
     assert cat == "seo_listicle"
+
+
+def test_detect_lead_magnets_finds_ebook_with_form_gate():
+    html = _load("blog_with_lead_magnets.html")
+    magnets = content_demand._detect_lead_magnets(html, source_page="blog_index")
+    ebook = next((m for m in magnets if m.asset_type == "ebook"), None)
+    assert ebook is not None
+    assert ebook.has_form_gate is True
+    assert ebook.source_page == "blog_index"
+
+
+def test_detect_lead_magnets_finds_calculator_without_gate():
+    html = _load("blog_with_lead_magnets.html")
+    magnets = content_demand._detect_lead_magnets(html, source_page="blog_index")
+    calc = next((m for m in magnets if m.asset_type == "calculator"), None)
+    assert calc is not None
+    assert calc.has_form_gate is False
+
+
+def test_detect_lead_magnets_finds_report():
+    html = _load("blog_with_lead_magnets.html")
+    magnets = content_demand._detect_lead_magnets(html, source_page="blog_index")
+    assert any(m.asset_type == "report" for m in magnets)
+
+
+def test_detect_lead_magnets_returns_empty_when_no_ctas():
+    html = "<html><body><p>nothing here</p></body></html>"
+    magnets = content_demand._detect_lead_magnets(html, source_page="homepage")
+    assert magnets == []
+
+
+def test_detect_lead_magnets_caps_at_ten():
+    """Build HTML with 15 ebook CTAs; result should cap at 10."""
+    parts = ["<html><body>"]
+    for i in range(15):
+        parts.append(f'<section><a href="/r/{i}">Download the ebook number {i}</a></section>')
+    parts.append("</body></html>")
+    html = "".join(parts)
+    magnets = content_demand._detect_lead_magnets(html, source_page="homepage")
+    assert len(magnets) <= 10
+
+
+def test_detect_lead_magnets_dedupes_by_url():
+    html = (
+        '<section><a href="/r/playbook">Download the ebook</a></section>'
+        '<section><a href="/r/playbook">Free ebook</a></section>'
+    )
+    magnets = content_demand._detect_lead_magnets(html, source_page="homepage")
+    assert len(magnets) == 1

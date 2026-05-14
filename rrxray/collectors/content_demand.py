@@ -166,3 +166,99 @@ def _categorize_post(title: str, description: str = "") -> tuple[str, str | None
             if kw.lower() in haystack:
                 return entry["category"], kw
     return "other", None
+
+
+from rrxray.collectors._content_demand_catalog import LEAD_MAGNET_CTA_PATTERNS  # noqa: E402
+from rrxray.schemas.content_demand import LeadMagnet  # noqa: E402
+
+
+_FORM_NEARBY_RE = re.compile(
+    r'<form[^>]*>[\s\S]{0,500}<input[^>]*type=["\']email["\']',
+    re.IGNORECASE,
+)
+
+
+def _detect_lead_magnets(html: str, source_page: str) -> list[LeadMagnet]:
+    """Scan HTML for lead-magnet CTAs.
+
+    For each CTA-text pattern from LEAD_MAGNET_CTA_PATTERNS, capture the
+    surrounding anchor's href + title, infer asset_type from the matched
+    pattern, and run a proximity check for a <form> with an email input in
+    the same chunk to set has_form_gate.
+
+    Cap: 10 results per call. Dedupe by URL (or title if URL is missing).
+    """
+    if not html:
+        return []
+
+    magnets: list[LeadMagnet] = []
+    seen_keys: set[str] = set()
+
+    for entry in LEAD_MAGNET_CTA_PATTERNS:
+        asset_type = entry["asset_type"]
+        for pattern in entry["patterns"]:
+            for m in re.finditer(re.escape(pattern), html, re.IGNORECASE):
+                # Capture the anchor surrounding (or just-after) this match
+                start = max(0, m.start() - 400)
+                end = min(len(html), m.end() + 400)
+                window = html[start:end]
+
+                # Prefer an anchor whose text contains the match (so a CTA
+                # like "Try the calculator" wins over an unrelated earlier
+                # anchor in the same window). Fall back to the first anchor
+                # in the window otherwise.
+                anchor_re = re.compile(
+                    r'<a[^>]*\bhref=["\']([^"\']+)["\'][^>]*>([^<]+)</a>',
+                    re.IGNORECASE,
+                )
+                anchor_m = None
+                for cand in anchor_re.finditer(window):
+                    if pattern.lower() in cand.group(2).lower():
+                        anchor_m = cand
+                        break
+                if anchor_m is None:
+                    anchor_m = anchor_re.search(window)
+                if anchor_m:
+                    url = anchor_m.group(1).strip()
+                    title = anchor_m.group(2).strip()
+                else:
+                    url = ""
+                    # Fall back to nearest <h*> text above the match
+                    heading_m = re.search(
+                        r"<h[1-6][^>]*>([^<]+)</h[1-6]>", window, re.IGNORECASE,
+                    )
+                    title = heading_m.group(1).strip() if heading_m else pattern
+
+                if not title or len(title) > 200:
+                    continue
+
+                key = url or title.lower()
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+
+                # Form-gate proximity: look forward from the match for a
+                # <form> with an email input, but stop at the next section
+                # boundary (next <h1-6> or </section>) so we don't bleed
+                # into the following lead-magnet's form.
+                forward = html[m.end():m.end() + 600]
+                boundary_m = re.search(
+                    r"</section\s*>|<h[1-6]\b", forward, re.IGNORECASE,
+                )
+                forward_clipped = (
+                    forward[: boundary_m.start()] if boundary_m else forward
+                )
+                has_form_gate = bool(_FORM_NEARBY_RE.search(forward_clipped))
+
+                magnets.append(LeadMagnet(
+                    title=title,
+                    asset_type=asset_type,  # type: ignore[arg-type]
+                    url=url or None,
+                    has_form_gate=has_form_gate,
+                    source_page=source_page,
+                ))
+
+                if len(magnets) >= 10:
+                    return magnets
+
+    return magnets
