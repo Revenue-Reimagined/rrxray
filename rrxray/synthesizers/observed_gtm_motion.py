@@ -59,12 +59,13 @@ def _render_user_message(
     pricing,
     tech_stack,
     revenue_motion=None,
+    content_demand=None,
     raw_pricing_text: str = "",
     raw_homepage_text: str = "",
 ) -> str:
     """Render the Section A user message.
 
-    All three Section A collector outputs are optional. The Jinja template
+    All four Section A collector outputs are optional. The Jinja template
     renders a conditional block per signal: full data when present, "not
     collected" fallback when None.
     """
@@ -75,6 +76,7 @@ def _render_user_message(
         pricing=pricing,
         tech_stack=tech_stack,
         revenue_motion=revenue_motion,
+        content_demand=content_demand,
         raw_pricing_text=raw_pricing_text,
         raw_homepage_text=raw_homepage_text,
     )
@@ -84,9 +86,15 @@ async def synthesize(ctx: SynthesizerContext) -> ObservedGtmMotionNarrative | No
     pricing = ctx.collector_outputs.pricing_packaging
     tech_stack = ctx.collector_outputs.tech_stack
     revenue_motion = ctx.collector_outputs.revenue_motion
+    content_demand = ctx.collector_outputs.content_demand
 
     # Skip only when ALL Section A collectors absent
-    if pricing is None and tech_stack is None and revenue_motion is None:
+    if (
+        pricing is None
+        and tech_stack is None
+        and revenue_motion is None
+        and content_demand is None
+    ):
         log.info("All Section A collectors absent; skipping observed_gtm_motion synthesis")
         return None
 
@@ -108,6 +116,7 @@ async def synthesize(ctx: SynthesizerContext) -> ObservedGtmMotionNarrative | No
         pricing,
         tech_stack,
         revenue_motion=revenue_motion,
+        content_demand=content_demand,
         raw_pricing_text=raw_pricing_text,
         raw_homepage_text=raw_homepage_text,
     )
