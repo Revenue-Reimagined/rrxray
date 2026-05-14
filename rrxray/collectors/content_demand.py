@@ -546,3 +546,164 @@ def _emit_findings(
         ))
 
     return findings, gaps, questions
+
+
+import json  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from rrxray.schemas.content_demand import ContentDemandData  # noqa: E402
+
+
+def _write_evidence(
+    evidence_dir: Path,
+    homepage_html: str,
+    blog_html: str | None,
+    lead_magnets: list[LeadMagnet],
+    podcast: tuple[str | None, str | None],
+    newsletter: tuple[str | None, str | None],
+    blog_posts: list[BlogPost],
+    post_counts: dict[str, int],
+    most_recent_date: str | None,
+) -> None:
+    """Write raw HTML + structured summary to the evidence dir."""
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    # Clean stale evidence from prior runs
+    for stale in evidence_dir.glob("*.html"):
+        stale.unlink()
+    for stale in evidence_dir.glob("*.json"):
+        stale.unlink()
+
+    if homepage_html:
+        (evidence_dir / "homepage.html").write_text(homepage_html, encoding="utf-8")
+    if blog_html:
+        (evidence_dir / "blog.html").write_text(blog_html, encoding="utf-8")
+    (evidence_dir / "lead_magnets.json").write_text(
+        json.dumps([m.model_dump() for m in lead_magnets], indent=2),
+        encoding="utf-8",
+    )
+    summary = {
+        "blog_posts": [p.model_dump() for p in blog_posts],
+        "post_counts_by_category": post_counts,
+        "most_recent_post_date": most_recent_date,
+        "podcast_platform": podcast[0],
+        "podcast_name": podcast[1],
+        "newsletter_platform": newsletter[0],
+        "newsletter_archive_url": newsletter[1],
+    }
+    (evidence_dir / "content_demand_summary.json").write_text(
+        json.dumps(summary, indent=2), encoding="utf-8",
+    )
+
+
+async def collect(ctx) -> ContentDemandData:
+    """Scrape homepage + blog, run categorization + detection, emit findings."""
+    from rrxray.services.firecrawl_client import FirecrawlError
+
+    now = datetime.now(UTC)
+    homepage_url = f"https://{ctx.domain}"
+
+    # Homepage scrape (best-effort; needed for podcast/newsletter detection)
+    homepage_html = ""
+    try:
+        homepage_page = await ctx.firecrawl.scrape_url(homepage_url, only_main_content=False)
+        homepage_html = (homepage_page.html or "") if homepage_page else ""
+    except FirecrawlError as e:
+        log.warning("homepage scrape failed for %s: %s", homepage_url, e)
+
+    # Blog discovery + scrape (best-effort)
+    blog_url, blog_page = await _discover_blog_url(ctx)
+    blog_html = (blog_page.html if blog_page else "") or ""
+
+    # Parse + categorize blog posts
+    blog_posts: list[BlogPost] = []
+    if blog_html:
+        parsed = _parse_blog_posts(blog_html, base_url=blog_url or homepage_url)
+        for p in parsed:
+            category, matched = _categorize_post(p.title, "")
+            blog_posts.append(BlogPost(
+                title=p.title,
+                url=p.url,
+                author=p.author,
+                published_date=p.published_date,
+                category=category,  # type: ignore[arg-type]
+                matched_keyword=matched,
+            ))
+
+    # Lead magnet detection (homepage + blog index combined; capped to 10)
+    homepage_magnets = _detect_lead_magnets(homepage_html, source_page="homepage")
+    blog_magnets = _detect_lead_magnets(blog_html, source_page="blog_index")
+    lead_magnets: list[LeadMagnet] = []
+    seen_keys: set[str] = set()
+    for lm in homepage_magnets + blog_magnets:
+        key = lm.url or lm.title.lower()
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        lead_magnets.append(lm)
+        if len(lead_magnets) >= 10:
+            break
+
+    # Podcast + newsletter (homepage only)
+    podcast = _detect_podcast(homepage_html)
+    newsletter = _detect_newsletter(homepage_html)
+
+    # Aggregate
+    post_counts, most_recent_date = _compute_post_counts(blog_posts)
+
+    # Findings
+    findings, gaps, questions = _emit_findings(
+        domain=ctx.domain,
+        blog_index_url=blog_url,
+        blog_posts=blog_posts,
+        post_counts=post_counts,
+        most_recent_date=most_recent_date,
+        lead_magnets=lead_magnets,
+        podcast=podcast,
+        newsletter=newsletter,
+    )
+
+    # Evidence
+    _write_evidence(
+        ctx.evidence_dir / NAME,
+        homepage_html,
+        blog_html if blog_html else None,
+        lead_magnets,
+        podcast,
+        newsletter,
+        blog_posts,
+        post_counts,
+        most_recent_date,
+    )
+
+    # Source citations
+    sources = []
+    if blog_url:
+        sources.append(SourceCitation(
+            url=blog_url, timestamp=now,
+            evidence_path=str(
+                (ctx.evidence_dir / NAME / "blog.html").relative_to(ctx.evidence_dir)
+            ) if blog_html else None,
+        ))
+    if homepage_html:
+        sources.append(SourceCitation(
+            url=homepage_url, timestamp=now,
+            evidence_path=str(
+                (ctx.evidence_dir / NAME / "homepage.html").relative_to(ctx.evidence_dir)
+            ),
+        ))
+
+    return ContentDemandData(
+        blog_index_url=blog_url,
+        blog_posts=blog_posts,
+        post_counts_by_category=post_counts,
+        most_recent_post_date=most_recent_date,
+        lead_magnets=lead_magnets,
+        podcast_platform=podcast[0],  # type: ignore[arg-type]
+        podcast_name=podcast[1],
+        newsletter_platform=newsletter[0],  # type: ignore[arg-type]
+        newsletter_archive_url=newsletter[1],
+        findings=findings,
+        gaps=gaps,
+        discovery_questions=questions,
+        sources=sources,
+    )

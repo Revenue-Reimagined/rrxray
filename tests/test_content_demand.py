@@ -458,3 +458,118 @@ def test_emit_findings_substack_newsletter():
     )
     text = " ".join(f.text.lower() for f in findings)
     assert "substack" in text or "founder" in text or "direct" in text
+
+
+def test_collect_writes_evidence(tmp_path):
+    ctx = _make_ctx(tmp_path, scrape_responses={
+        "https://acme.com": {
+            "html": _load("homepage_with_podcast_apple.html"),
+            "markdown": "",
+            "metadata": {"sourceURL": "https://acme.com"},
+        },
+        "https://acme.com/blog": {
+            "html": _load("blog_simple.html"),
+            "markdown": "",
+            "metadata": {"sourceURL": "https://acme.com/blog"},
+        },
+    })
+    asyncio.run(content_demand.collect(ctx))
+    evidence = tmp_path / "evidence" / "content_demand"
+    assert (evidence / "homepage.html").exists()
+    assert (evidence / "blog.html").exists()
+    assert (evidence / "content_demand_summary.json").exists()
+
+
+def test_collect_returns_content_demand_data(tmp_path):
+    from rrxray.schemas.content_demand import ContentDemandData
+
+    ctx = _make_ctx(tmp_path, scrape_responses={
+        "https://acme.com": {
+            "html": _load("homepage_with_podcast_apple.html"),
+            "markdown": "",
+            "metadata": {"sourceURL": "https://acme.com"},
+        },
+        "https://acme.com/blog": {
+            "html": _load("blog_simple.html"),
+            "markdown": "",
+            "metadata": {"sourceURL": "https://acme.com/blog"},
+        },
+    })
+    result = asyncio.run(content_demand.collect(ctx))
+    assert isinstance(result, ContentDemandData)
+    assert result.blog_index_url == "https://acme.com/blog"
+    assert len(result.blog_posts) >= 3
+    assert result.podcast_platform == "apple_podcasts"
+
+
+def test_collect_categorizes_posts(tmp_path):
+    ctx = _make_ctx(tmp_path, scrape_responses={
+        "https://acme.com": {
+            "html": "<html></html>",
+            "markdown": "",
+            "metadata": {"sourceURL": "https://acme.com"},
+        },
+        "https://acme.com/blog": {
+            "html": _load("blog_seo_dominant.html"),
+            "markdown": "",
+            "metadata": {"sourceURL": "https://acme.com/blog"},
+        },
+    })
+    result = asyncio.run(content_demand.collect(ctx))
+    assert result.post_counts_by_category.get("seo_listicle", 0) >= 8
+
+
+def test_collect_handles_no_blog(tmp_path):
+    """No blog reachable on standard paths: collector returns data with a finding, no exception."""
+    ctx = _make_ctx(tmp_path, scrape_responses={
+        "https://acme.com": {
+            "html": "<html><body>homepage</body></html>",
+            "markdown": "",
+            "metadata": {"sourceURL": "https://acme.com"},
+        },
+    })
+    result = asyncio.run(content_demand.collect(ctx))
+    assert result.blog_index_url is None
+    assert result.blog_posts == []
+    assert len(result.findings) >= 1
+
+
+def test_collect_handles_homepage_failure(tmp_path):
+    """Homepage scrape fails: still collect blog data."""
+    ctx = _make_ctx(tmp_path, scrape_responses={
+        "https://acme.com/blog": {
+            "html": _load("blog_simple.html"),
+            "markdown": "",
+            "metadata": {"sourceURL": "https://acme.com/blog"},
+        },
+    })
+    result = asyncio.run(content_demand.collect(ctx))
+    assert result.blog_index_url == "https://acme.com/blog"
+    assert len(result.blog_posts) >= 3
+    assert result.podcast_platform is None
+    assert result.newsletter_platform is None
+
+
+def test_collect_total_failure_returns_graceful_data(tmp_path):
+    """All scrapes fail: collector returns a ContentDemandData with findings."""
+    ctx = _make_ctx(tmp_path, scrape_responses={})
+    result = asyncio.run(content_demand.collect(ctx))
+    assert result.blog_index_url is None
+    assert result.blog_posts == []
+    assert len(result.findings) >= 1
+
+
+def test_source_citation_evidence_path_relative(tmp_path):
+    """SourceCitation.evidence_path must NOT start with 'evidence/' to avoid template double-prefix."""
+    ctx = _make_ctx(tmp_path, scrape_responses={
+        "https://acme.com/blog": {
+            "html": _load("blog_simple.html"),
+            "markdown": "",
+            "metadata": {"sourceURL": "https://acme.com/blog"},
+        },
+    })
+    result = asyncio.run(content_demand.collect(ctx))
+    for source in result.sources:
+        if source.evidence_path:
+            assert not source.evidence_path.startswith("evidence/")
+            assert source.evidence_path.startswith("content_demand/")
