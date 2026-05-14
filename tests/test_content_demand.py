@@ -294,3 +294,33 @@ def test_detect_podcast_returns_none_when_absent():
     platform, name = content_demand._detect_podcast(html)
     assert platform is None
     assert name is None
+
+
+def test_detect_newsletter_substack():
+    html = _load("homepage_with_substack_newsletter.html")
+    platform, archive_url = content_demand._detect_newsletter(html)
+    assert platform == "substack"
+    assert archive_url and "substack.com" in archive_url
+
+
+def test_detect_newsletter_embedded_form_with_subscribe_button():
+    html = _load("homepage_with_embedded_newsletter_form.html")
+    platform, archive_url = content_demand._detect_newsletter(html)
+    assert platform == "embedded_form"
+    assert archive_url is None
+
+
+def test_detect_newsletter_form_without_newsletter_keyword_returns_none():
+    """Generic contact form should NOT register as a newsletter."""
+    html = (
+        '<form><input type="email"><button>Contact us</button></form>'
+    )
+    platform, _ = content_demand._detect_newsletter(html)
+    assert platform is None
+
+
+def test_detect_newsletter_returns_none_when_absent():
+    html = "<html><body><p>plain page</p></body></html>"
+    platform, archive_url = content_demand._detect_newsletter(html)
+    assert platform is None
+    assert archive_url is None

@@ -306,3 +306,51 @@ def _detect_podcast(homepage_html: str) -> tuple[str | None, str | None]:
         return "rss_only", name
 
     return None, None
+
+
+from rrxray.collectors._content_demand_catalog import SUBSTACK_PATTERN  # noqa: E402
+
+
+_NEWSLETTER_BUTTON_RE = re.compile(
+    r"<button[^>]*>([^<]*)</button>",
+    re.IGNORECASE,
+)
+
+_NEWSLETTER_KEYWORDS = ("subscribe", "newsletter", "sign up", "sign-up", "signup")
+
+
+def _detect_newsletter(homepage_html: str) -> tuple[str | None, str | None]:
+    """Detect newsletter posture.
+
+    Substack first (concrete platform + archive URL). Otherwise an embedded
+    <form> with an email input AND a nearby button whose text contains
+    'subscribe', 'newsletter', or 'sign up' counts as embedded_form.
+
+    Returns (platform, archive_url) or (None, None).
+    """
+    if not homepage_html:
+        return None, None
+
+    substack_m = re.search(SUBSTACK_PATTERN, homepage_html, re.IGNORECASE)
+    if substack_m:
+        subdomain = substack_m.group(1)
+        return "substack", f"https://{subdomain}.substack.com"
+
+    # Embedded form heuristic: <form> with <input type="email"> AND a nearby
+    # button whose text contains a newsletter keyword.
+    for form_m in re.finditer(
+        r'<form[\s\S]{0,2000}?</form>', homepage_html, re.IGNORECASE,
+    ):
+        block = form_m.group(0)
+        if not re.search(r'<input[^>]*\btype=["\']email["\']', block, re.IGNORECASE):
+            continue
+        for btn_m in _NEWSLETTER_BUTTON_RE.finditer(block):
+            btn_text = btn_m.group(1).lower()
+            if any(kw in btn_text for kw in _NEWSLETTER_KEYWORDS):
+                return "embedded_form", None
+        # Heading near the form: check 200 chars before the form for a newsletter cue
+        before = homepage_html[max(0, form_m.start() - 200):form_m.start()].lower()
+        if any(kw in before for kw in _NEWSLETTER_KEYWORDS):
+            return "embedded_form", None
+
+    return None, None
