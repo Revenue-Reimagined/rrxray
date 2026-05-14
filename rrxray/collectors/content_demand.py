@@ -354,3 +354,195 @@ def _detect_newsletter(homepage_html: str) -> tuple[str | None, str | None]:
             return "embedded_form", None
 
     return None, None
+
+
+from datetime import UTC, date, datetime  # noqa: E402
+
+from rrxray.schemas._shared import Finding, SourceCitation  # noqa: E402
+
+
+def _compute_post_counts(
+    blog_posts: list[BlogPost],
+) -> tuple[dict[str, int], str | None]:
+    """Aggregate counts per category and derive the most recent ISO date.
+
+    Dates that don't parse as YYYY-MM-DD are ignored when computing
+    most_recent_post_date (but the original string remains on the BlogPost).
+    """
+    counts: dict[str, int] = {}
+    for p in blog_posts:
+        counts[p.category] = counts.get(p.category, 0) + 1
+
+    iso_dates: list[date] = []
+    for p in blog_posts:
+        if not p.published_date:
+            continue
+        try:
+            iso_dates.append(date.fromisoformat(p.published_date))
+        except ValueError:
+            continue
+
+    most_recent = max(iso_dates).isoformat() if iso_dates else None
+    return counts, most_recent
+
+
+def _emit_findings(
+    domain: str,
+    blog_index_url: str | None,
+    blog_posts: list[BlogPost],
+    post_counts: dict[str, int],
+    most_recent_date: str | None,
+    lead_magnets: list[LeadMagnet],
+    podcast: tuple[str | None, str | None],
+    newsletter: tuple[str | None, str | None],
+) -> tuple[list[Finding], list[str], list[str]]:
+    """Rule-based findings/gaps/questions for content posture. No LLM."""
+    now = datetime.now(UTC)
+    source_url = blog_index_url or f"https://{domain}"
+    findings: list[Finding] = []
+    gaps: list[str] = []
+    questions: list[str] = []
+
+    # No detectable content anywhere
+    if (
+        not blog_posts
+        and not lead_magnets
+        and podcast[0] is None
+        and newsletter[0] is None
+    ):
+        findings.append(Finding(
+            text=(
+                f"No blog, lead magnets, podcast, or newsletter detected on {domain}. "
+                f"Pipeline does not appear to run through content channels; the GTM "
+                f"motion looks relationship-led or outbound-only."
+            ),
+            source=SourceCitation(url=source_url, timestamp=now),
+        ))
+        questions.append(
+            "We did not detect a public content surface (blog, lead magnets, podcast, "
+            "or newsletter). How does your GTM generate top-of-funnel demand today: "
+            "outbound, referral, paid, or events?"
+        )
+        return findings, gaps, questions
+
+    total_posts = len(blog_posts)
+    podcast_platform, podcast_name = podcast
+    newsletter_platform, _newsletter_archive = newsletter
+
+    # Stale / dormant blog (most recent post > 90 days old)
+    if most_recent_date:
+        try:
+            recent = date.fromisoformat(most_recent_date)
+            days_since = (now.date() - recent).days
+            if days_since > 90:
+                findings.append(Finding(
+                    text=(
+                        f"Most recent blog post is from {most_recent_date} "
+                        f"({days_since} days ago). Content function appears "
+                        f"de-prioritized; check whether the team pivoted off "
+                        f"content as a channel or simply defunded it."
+                    ),
+                    source=SourceCitation(url=source_url, timestamp=now),
+                ))
+                questions.append(
+                    f"Your most recent blog post is from {most_recent_date}. "
+                    "Was content de-prioritized intentionally, or did the function "
+                    "shift to a different surface (newsletter, podcast, social)?"
+                )
+        except ValueError:
+            pass
+
+    # SEO-dominant content mix
+    if total_posts > 0:
+        seo_count = post_counts.get("seo_listicle", 0)
+        if seo_count / total_posts >= 0.5 and seo_count >= 5:
+            findings.append(Finding(
+                text=(
+                    f"Content mix is SEO-dominant ({seo_count} of {total_posts} "
+                    f"posts are listicles). This pattern matches a top-of-funnel "
+                    f"content shop or outsourced SEO supplement, often paired "
+                    f"with paid acquisition rather than sales-led pipeline."
+                ),
+                source=SourceCitation(url=source_url, timestamp=now),
+            ))
+
+    # Thought leadership dominant
+    if total_posts > 0:
+        tl_count = post_counts.get("thought_leadership", 0)
+        if tl_count / total_posts >= 0.5 and tl_count >= 3:
+            findings.append(Finding(
+                text=(
+                    f"Content mix skews to thought leadership "
+                    f"({tl_count} of {total_posts}). Signals enterprise positioning "
+                    f"and sales-led brand-building, not a paid-acquisition motion."
+                ),
+                source=SourceCitation(url=source_url, timestamp=now),
+            ))
+
+    # Founder essay dominant
+    if total_posts > 0:
+        fe_count = post_counts.get("founder_essay", 0)
+        if fe_count / total_posts >= 0.4 and fe_count >= 3:
+            findings.append(Finding(
+                text=(
+                    f"{fe_count} of {total_posts} posts are founder essays. "
+                    f"Personal-brand distribution rather than corporate content "
+                    f"funnel; common in early-stage / niche-positioning plays."
+                ),
+                source=SourceCitation(url=source_url, timestamp=now),
+            ))
+
+    # Lead-magnet posture
+    if blog_posts and not lead_magnets:
+        gaps.append(
+            "Blog publishing without any visible lead magnets. Content is "
+            "trust-building only; conversion either happens via sales channels "
+            "or pipeline does not run through email capture."
+        )
+        questions.append(
+            "Your blog is active but we did not find any gated lead magnets. "
+            "Is content meant to drive pipeline, or is it positioning-only?"
+        )
+    elif len(lead_magnets) >= 5:
+        findings.append(Finding(
+            text=(
+                f"{len(lead_magnets)} lead magnets visible. Funnel-driven "
+                f"email-capture motion; typically pairs with marketing-automation "
+                f"in the tech stack (HubSpot / Marketo / Pardot)."
+            ),
+            source=SourceCitation(url=source_url, timestamp=now),
+        ))
+
+    # Podcast signal
+    if podcast_platform:
+        findings.append(Finding(
+            text=(
+                f"Podcast detected ({podcast_platform}"
+                f"{f', {podcast_name}' if podcast_name else ''}). "
+                f"Often signals brand-category investment and ABM-adjacent "
+                f"positioning; pairs with thought leadership when both are present."
+            ),
+            source=SourceCitation(url=source_url, timestamp=now),
+        ))
+
+    # Newsletter signal
+    if newsletter_platform == "substack":
+        findings.append(Finding(
+            text=(
+                "Substack newsletter detected. Founder-direct distribution "
+                "model rather than corporate funnel; usually a personal-brand "
+                "or niche-positioning play."
+            ),
+            source=SourceCitation(url=source_url, timestamp=now),
+        ))
+    elif newsletter_platform == "embedded_form":
+        findings.append(Finding(
+            text=(
+                "Embedded newsletter signup detected. Corporate-newsletter shape "
+                "(captures email for ongoing nurture), typical of marketing-automation "
+                "funnel rather than founder-direct distribution."
+            ),
+            source=SourceCitation(url=source_url, timestamp=now),
+        ))
+
+    return findings, gaps, questions

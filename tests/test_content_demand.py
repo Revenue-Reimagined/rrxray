@@ -10,6 +10,7 @@ import pytest  # noqa: F401
 
 from rrxray.collectors import content_demand
 from rrxray.context import CollectorContext
+from rrxray.schemas.content_demand import BlogPost, LeadMagnet
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "synthetic" / "content_demand"
@@ -324,3 +325,136 @@ def test_detect_newsletter_returns_none_when_absent():
     platform, archive_url = content_demand._detect_newsletter(html)
     assert platform is None
     assert archive_url is None
+
+
+def test_compute_post_counts_basic():
+    posts = [
+        BlogPost(title="Top 10", category="seo_listicle"),
+        BlogPost(title="Top 5", category="seo_listicle"),
+        BlogPost(title="Why I built X", category="founder_essay"),
+    ]
+    counts, recent = content_demand._compute_post_counts(posts)
+    assert counts["seo_listicle"] == 2
+    assert counts["founder_essay"] == 1
+    assert recent is None  # no dates supplied
+
+
+def test_compute_post_counts_most_recent_date():
+    posts = [
+        BlogPost(title="A", category="other", published_date="2026-01-15"),
+        BlogPost(title="B", category="other", published_date="2026-04-15"),
+        BlogPost(title="C", category="other", published_date="2026-02-20"),
+    ]
+    _counts, recent = content_demand._compute_post_counts(posts)
+    assert recent == "2026-04-15"
+
+
+def test_compute_post_counts_ignores_unparseable_dates():
+    posts = [
+        BlogPost(title="A", category="other", published_date="January 10, 2025"),
+        BlogPost(title="B", category="other", published_date="2026-04-15"),
+    ]
+    _counts, recent = content_demand._compute_post_counts(posts)
+    assert recent == "2026-04-15"
+
+
+def test_emit_findings_no_content_at_all():
+    findings, gaps, questions = content_demand._emit_findings(  # noqa: RUF059
+        domain="acme.com",
+        blog_index_url=None,
+        blog_posts=[],
+        post_counts={},
+        most_recent_date=None,
+        lead_magnets=[],
+        podcast=(None, None),
+        newsletter=(None, None),
+    )
+    text = " ".join(f.text.lower() for f in findings) + " " + " ".join(questions).lower()
+    assert "no" in text
+    assert "blog" in text or "content" in text or "insights" in text
+
+
+def test_emit_findings_seo_dominant():
+    posts = [BlogPost(title=f"Top {i}", category="seo_listicle") for i in range(12)]
+    posts += [BlogPost(title="x", category="other") for _ in range(3)]
+    counts = {"seo_listicle": 12, "other": 3}
+    findings, _gaps, _q = content_demand._emit_findings(
+        domain="acme.com",
+        blog_index_url="https://acme.com/blog",
+        blog_posts=posts,
+        post_counts=counts,
+        most_recent_date="2026-04-15",
+        lead_magnets=[],
+        podcast=(None, None),
+        newsletter=(None, None),
+    )
+    text = " ".join(f.text.lower() for f in findings)
+    assert "seo" in text or "listicle" in text
+
+
+def test_emit_findings_dormant_blog():
+    """most_recent_date > 90 days old triggers a stale-content finding."""
+    posts = [BlogPost(title="Old", category="other", published_date="2025-01-10")]
+    findings, _gaps, _q = content_demand._emit_findings(
+        domain="acme.com",
+        blog_index_url="https://acme.com/blog",
+        blog_posts=posts,
+        post_counts={"other": 1},
+        most_recent_date="2025-01-10",
+        lead_magnets=[],
+        podcast=(None, None),
+        newsletter=(None, None),
+    )
+    text = " ".join(f.text.lower() for f in findings)
+    assert "stale" in text or "dormant" in text or "days" in text or "de-prioriti" in text
+
+
+def test_emit_findings_blog_no_lead_magnets():
+    posts = [BlogPost(title="A", category="thought_leadership") for _ in range(5)]
+    findings, gaps, _q = content_demand._emit_findings(
+        domain="acme.com",
+        blog_index_url="https://acme.com/blog",
+        blog_posts=posts,
+        post_counts={"thought_leadership": 5},
+        most_recent_date="2026-04-15",
+        lead_magnets=[],
+        podcast=(None, None),
+        newsletter=(None, None),
+    )
+    text = (" ".join(f.text.lower() for f in findings) + " " + " ".join(gaps).lower())
+    assert "lead magnet" in text or "conversion" in text or "trust" in text
+
+
+def test_emit_findings_lead_magnet_heavy():
+    posts = [BlogPost(title="A", category="thought_leadership") for _ in range(5)]
+    magnets = [
+        LeadMagnet(title=f"M{i}", asset_type="ebook", source_page="homepage", has_form_gate=True)
+        for i in range(6)
+    ]
+    findings, _gaps, _q = content_demand._emit_findings(
+        domain="acme.com",
+        blog_index_url="https://acme.com/blog",
+        blog_posts=posts,
+        post_counts={"thought_leadership": 5},
+        most_recent_date="2026-04-15",
+        lead_magnets=magnets,
+        podcast=(None, None),
+        newsletter=(None, None),
+    )
+    text = " ".join(f.text.lower() for f in findings)
+    assert "lead magnet" in text or "funnel" in text or "capture" in text
+
+
+def test_emit_findings_substack_newsletter():
+    findings, _gaps, _q = content_demand._emit_findings(
+        domain="acme.com",
+        blog_index_url=None,
+        blog_posts=[],
+        post_counts={},
+        most_recent_date=None,
+        lead_magnets=[],
+        podcast=(None, None),
+        newsletter=("substack", "https://acme.substack.com"),
+    )
+    text = " ".join(f.text.lower() for f in findings)
+    assert "substack" in text or "founder" in text or "direct" in text
