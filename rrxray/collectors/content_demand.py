@@ -131,3 +131,38 @@ def _parse_blog_posts(html: str, base_url: str) -> list[BlogPost]:
             break
 
     return posts
+
+
+from rrxray.collectors._content_demand_catalog import CONTENT_KEYWORDS  # noqa: E402
+
+
+# Numeric-prefix SEO listicle pattern: "5 ways", "12 tips", "7 mistakes", etc.
+_SEO_NUMERIC_RE = re.compile(
+    r"^\s*\d{1,3}\s+(ways|tips|mistakes|reasons|things|tools|strategies|tactics|examples|signs|lessons)\b",
+    re.IGNORECASE,
+)
+
+
+def _categorize_post(title: str, description: str = "") -> tuple[str, str | None]:
+    """Categorize a post via the keyword catalog.
+
+    Order-by-specificity: CONTENT_KEYWORDS is pre-ordered (SEO listicles
+    first, thought leadership last as catch-all). First-match wins.
+
+    A dedicated SEO-listicle numeric-prefix regex runs before the keyword
+    catalog so "5 ways to...", "12 tips for..." etc. categorize even when the
+    exact substring isn't in the catalog.
+
+    Returns (category, matched_keyword). Falls back to ("other", None).
+    """
+    haystack = f"{title} {description}".lower()
+
+    # SEO listicle numeric-prefix short-circuit
+    if _SEO_NUMERIC_RE.search(title):
+        return "seo_listicle", "<numeric-prefix>"
+
+    for entry in CONTENT_KEYWORDS:
+        for kw in entry["keywords"]:
+            if kw.lower() in haystack:
+                return entry["category"], kw
+    return "other", None

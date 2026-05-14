@@ -153,3 +153,61 @@ def test_parse_blog_posts_preserves_document_order():
     titles = [p.title for p in posts]
     # blog_simple.html lists "The Future of Revenue Ops" first
     assert titles[0] == "The Future of Revenue Ops"
+
+
+def test_categorize_post_seo_listicle_via_numeric_prefix():
+    cat, kw = content_demand._categorize_post("10 ways to close more deals", "")  # noqa: RUF059
+    assert cat == "seo_listicle"
+
+
+def test_categorize_post_seo_listicle_via_top_10():
+    cat, _ = content_demand._categorize_post("Top 10 sales tools for 2026", "")
+    assert cat == "seo_listicle"
+
+
+def test_categorize_post_case_study():
+    cat, kw = content_demand._categorize_post("Customer Story: Acme + BetaCo", "")
+    assert cat == "case_study"
+    assert "customer story" in kw.lower()
+
+
+def test_categorize_post_product_announcement():
+    cat, _ = content_demand._categorize_post("Introducing Workflow 2.0", "")
+    assert cat == "product_announcement"
+
+
+def test_categorize_post_tutorial():
+    cat, _ = content_demand._categorize_post("How to write better outbound emails", "")
+    assert cat == "tutorial"
+
+
+def test_categorize_post_founder_essay():
+    cat, _ = content_demand._categorize_post("Why I built this product", "")
+    assert cat == "founder_essay"
+
+
+def test_categorize_post_thought_leadership():
+    cat, _ = content_demand._categorize_post("The Future of Revenue Ops", "")
+    assert cat == "thought_leadership"
+
+
+def test_categorize_post_news_pr():
+    cat, _ = content_demand._categorize_post("Acme raises $50M Series B", "")
+    assert cat == "news_pr"
+
+
+def test_categorize_post_default_other():
+    cat, kw = content_demand._categorize_post("A short status update", "")
+    assert cat == "other"
+    assert kw is None
+
+
+def test_categorize_post_case_insensitive():
+    cat, _ = content_demand._categorize_post("THE FUTURE OF SALES", "")
+    assert cat == "thought_leadership"
+
+
+def test_categorize_post_specificity_order_seo_beats_thought_leadership():
+    """A title with both 'top 10' and 'the future of' should match seo_listicle (more specific, first in catalog)."""
+    cat, _ = content_demand._categorize_post("Top 10 takes on the future of sales", "")
+    assert cat == "seo_listicle"
