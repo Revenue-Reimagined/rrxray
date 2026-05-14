@@ -159,3 +159,53 @@ def test_collector_outputs_all_three_collectors_round_trip():
     assert restored.tech_stack is not None
     assert restored.revenue_motion is not None
     assert restored.revenue_motion.open_roles[0].title == "AE"
+
+
+def test_collector_outputs_has_content_demand_field():
+    """CollectorOutputs must accept a content_demand field."""
+    from rrxray.schemas.content_demand import ContentDemandData
+    from rrxray.schemas.data import CollectorOutputs
+
+    co = CollectorOutputs(content_demand=ContentDemandData())
+    assert co.content_demand is not None
+
+
+def test_collector_outputs_content_demand_defaults_none():
+    from rrxray.schemas.data import CollectorOutputs
+    co = CollectorOutputs()
+    assert co.content_demand is None
+
+
+def test_collector_outputs_four_section_a_collectors_round_trip():
+    import json
+
+    from rrxray.schemas.content_demand import BlogPost, ContentDemandData
+    from rrxray.schemas.data import CollectorOutputs
+    from rrxray.schemas.pricing_packaging import PricingPackagingData
+    from rrxray.schemas.revenue_motion import JobPosting, RevenueMotionData
+    from rrxray.schemas.tech_stack import DetectedTool, TechStackData
+
+    co = CollectorOutputs(
+        pricing_packaging=PricingPackagingData(
+            has_public_pricing=True, is_contact_us_gated=False,
+            current_pricing_url="https://example.com/pricing",
+        ),
+        tech_stack=TechStackData(
+            detected_tools=[DetectedTool(
+                name="HubSpot", category="marketing_automation", confidence="high",
+                signature_id="hubspot:strict_js", matched_text="x",
+            )],
+        ),
+        revenue_motion=RevenueMotionData(
+            careers_page_url="https://example.com/careers",
+            open_roles=[JobPosting(title="AE", category="ae", source="company_careers")],
+        ),
+        content_demand=ContentDemandData(
+            blog_index_url="https://example.com/blog",
+            blog_posts=[BlogPost(title="The Future of X", category="thought_leadership")],
+        ),
+    )
+    serialized = co.model_dump_json()
+    restored = CollectorOutputs.model_validate(json.loads(serialized))
+    assert restored.content_demand is not None
+    assert restored.content_demand.blog_posts[0].title == "The Future of X"
