@@ -262,3 +262,47 @@ def _detect_lead_magnets(html: str, source_page: str) -> list[LeadMagnet]:
                     return magnets
 
     return magnets
+
+
+from rrxray.collectors._content_demand_catalog import PODCAST_PATTERNS  # noqa: E402
+
+
+_RSS_LINK_RE = re.compile(
+    r'<link[^>]*\brel=["\']alternate["\'][^>]*\btype=["\']application/rss\+xml["\'][^>]*>',
+    re.IGNORECASE,
+)
+
+_RSS_TITLE_RE = re.compile(
+    r'\btitle=["\']([^"\']+)["\']',
+    re.IGNORECASE,
+)
+
+
+def _detect_podcast(homepage_html: str) -> tuple[str | None, str | None]:
+    """Detect podcast presence.
+
+    Priority: Apple Podcasts / Spotify URLs (concrete platforms) before
+    rss_only. The RSS <link> title attribute provides the podcast name when
+    present.
+
+    Returns (platform, name) or (None, None).
+    """
+    if not homepage_html:
+        return None, None
+
+    # Parse the RSS title once (used to enrich any platform match).
+    name: str | None = None
+    rss_m = _RSS_LINK_RE.search(homepage_html)
+    if rss_m:
+        title_m = _RSS_TITLE_RE.search(rss_m.group(0))
+        if title_m:
+            name = title_m.group(1).strip() or None
+
+    for entry in PODCAST_PATTERNS:
+        if re.search(entry["url_pattern"], homepage_html, re.IGNORECASE):
+            return entry["platform"], name
+
+    if rss_m:
+        return "rss_only", name
+
+    return None, None

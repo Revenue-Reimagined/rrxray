@@ -260,3 +260,37 @@ def test_detect_lead_magnets_dedupes_by_url():
     )
     magnets = content_demand._detect_lead_magnets(html, source_page="homepage")
     assert len(magnets) == 1
+
+
+def test_detect_podcast_apple():
+    html = _load("homepage_with_podcast_apple.html")
+    platform, name = content_demand._detect_podcast(html)
+    assert platform == "apple_podcasts"
+    # Name comes from the <link title=...> attribute when available
+    assert name == "The Revenue Show" or name is None
+
+
+def test_detect_podcast_spotify():
+    html = _load("homepage_with_podcast_spotify.html")
+    platform, _ = content_demand._detect_podcast(html)
+    assert platform == "spotify"
+
+
+def test_detect_podcast_rss_only():
+    """RSS link present but no Apple/Spotify link."""
+    html = (
+        '<html><head>'
+        '<link rel="alternate" type="application/rss+xml" title="Inside Sales" '
+        'href="https://example.com/feed.xml">'
+        '</head><body></body></html>'
+    )
+    platform, name = content_demand._detect_podcast(html)
+    assert platform == "rss_only"
+    assert name == "Inside Sales"
+
+
+def test_detect_podcast_returns_none_when_absent():
+    html = "<html><body><p>no podcast here</p></body></html>"
+    platform, name = content_demand._detect_podcast(html)
+    assert platform is None
+    assert name is None
