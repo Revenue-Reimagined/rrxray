@@ -129,6 +129,19 @@ def test_parse_blog_posts_handles_missing_dates_gracefully():
     assert all(p.published_date is None for p in posts)
 
 
+def test_parse_blog_posts_textual_date_normalizes_to_iso():
+    """A post with 'April 15, 2026' text date should be stored as '2026-04-15'."""
+    html = (
+        '<a href="/blog/post-1">How We Scale</a>'
+        '<span class="date">April 15, 2026</span>'
+        '<a href="/blog/post-2">Another Post</a>'
+    )
+    posts = content_demand._parse_blog_posts(html, "https://example.com")
+    assert len(posts) >= 1
+    # The date should be normalized to ISO format
+    assert posts[0].published_date == "2026-04-15"
+
+
 def test_parse_blog_posts_caps_at_fifteen():
     """Build a synthetic blog with 25 posts; only first 15 should be returned."""
     parts = ["<html><body>"]
@@ -157,60 +170,60 @@ def test_parse_blog_posts_preserves_document_order():
 
 
 def test_categorize_post_seo_listicle_via_numeric_prefix():
-    cat, kw = content_demand._categorize_post("10 ways to close more deals", "")  # noqa: RUF059
+    cat, kw = content_demand._categorize_post("10 ways to close more deals")  # noqa: RUF059
     assert cat == "seo_listicle"
 
 
 def test_categorize_post_seo_listicle_via_top_10():
-    cat, _ = content_demand._categorize_post("Top 10 sales tools for 2026", "")
+    cat, _ = content_demand._categorize_post("Top 10 sales tools for 2026")
     assert cat == "seo_listicle"
 
 
 def test_categorize_post_case_study():
-    cat, kw = content_demand._categorize_post("Customer Story: Acme + BetaCo", "")
+    cat, kw = content_demand._categorize_post("Customer Story: Acme + BetaCo")
     assert cat == "case_study"
     assert "customer story" in kw.lower()
 
 
 def test_categorize_post_product_announcement():
-    cat, _ = content_demand._categorize_post("Introducing Workflow 2.0", "")
+    cat, _ = content_demand._categorize_post("Introducing Workflow 2.0")
     assert cat == "product_announcement"
 
 
 def test_categorize_post_tutorial():
-    cat, _ = content_demand._categorize_post("How to write better outbound emails", "")
+    cat, _ = content_demand._categorize_post("How to write better outbound emails")
     assert cat == "tutorial"
 
 
 def test_categorize_post_founder_essay():
-    cat, _ = content_demand._categorize_post("Why I built this product", "")
+    cat, _ = content_demand._categorize_post("Why I built this product")
     assert cat == "founder_essay"
 
 
 def test_categorize_post_thought_leadership():
-    cat, _ = content_demand._categorize_post("The Future of Revenue Ops", "")
+    cat, _ = content_demand._categorize_post("The Future of Revenue Ops")
     assert cat == "thought_leadership"
 
 
 def test_categorize_post_news_pr():
-    cat, _ = content_demand._categorize_post("Acme raises $50M Series B", "")
+    cat, _ = content_demand._categorize_post("Acme raises $50M Series B")
     assert cat == "news_pr"
 
 
 def test_categorize_post_default_other():
-    cat, kw = content_demand._categorize_post("A short status update", "")
+    cat, kw = content_demand._categorize_post("A short status update")
     assert cat == "other"
     assert kw is None
 
 
 def test_categorize_post_case_insensitive():
-    cat, _ = content_demand._categorize_post("THE FUTURE OF SALES", "")
+    cat, _ = content_demand._categorize_post("THE FUTURE OF SALES")
     assert cat == "thought_leadership"
 
 
 def test_categorize_post_specificity_order_seo_beats_thought_leadership():
     """A title with both 'top 10' and 'the future of' should match seo_listicle (more specific, first in catalog)."""
-    cat, _ = content_demand._categorize_post("Top 10 takes on the future of sales", "")
+    cat, _ = content_demand._categorize_post("Top 10 takes on the future of sales")
     assert cat == "seo_listicle"
 
 
@@ -268,7 +281,7 @@ def test_detect_podcast_apple():
     platform, name = content_demand._detect_podcast(html)
     assert platform == "apple_podcasts"
     # Name comes from the <link title=...> attribute when available
-    assert name == "The Revenue Show" or name is None
+    assert name == "The Revenue Show"
 
 
 def test_detect_podcast_spotify():
@@ -306,6 +319,14 @@ def test_detect_newsletter_substack():
 
 def test_detect_newsletter_embedded_form_with_subscribe_button():
     html = _load("homepage_with_embedded_newsletter_form.html")
+    platform, archive_url = content_demand._detect_newsletter(html)
+    assert platform == "embedded_form"
+    assert archive_url is None
+
+
+def test_detect_newsletter_submit_input():
+    """<input type='submit' value='Subscribe'> should trigger embedded_form detection."""
+    html = _load("homepage_with_submit_newsletter.html")
     platform, archive_url = content_demand._detect_newsletter(html)
     assert platform == "embedded_form"
     assert archive_url is None

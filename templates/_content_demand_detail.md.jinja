@@ -47,6 +47,6 @@
 {% if cd.discovery_questions %}
 **Discovery questions:**
 {% for q in cd.discovery_questions %}
-- {{ q }}
+- {{ q | voice_collector }}
 {% endfor %}
 {% endif %}

@@ -1,9 +1,22 @@
 """content_demand collector: blog cadence + post mix + lead magnets + podcast + newsletter."""
-# ruff: noqa: I001
 from __future__ import annotations
 
+import json
 import logging
+import re
+from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urljoin
+
+from rrxray.collectors._content_demand_catalog import (
+    CONTENT_KEYWORDS,
+    LEAD_MAGNET_CTA_PATTERNS,
+    PODCAST_PATTERNS,
+    SUBSTACK_PATTERN,
+)
+from rrxray.schemas._shared import Finding, SourceCitation
+from rrxray.schemas.content_demand import BlogPost, ContentDemandData, LeadMagnet
 
 if TYPE_CHECKING:
     from rrxray.context import CollectorContext
@@ -29,12 +42,6 @@ async def _discover_blog_url(ctx: "CollectorContext"):  # noqa: UP037
             log.debug("blog discover: %s not reachable: %s", url, e)
             continue
     return None, None
-
-
-import re  # noqa: E402
-from urllib.parse import urljoin  # noqa: E402
-
-from rrxray.schemas.content_demand import BlogPost  # noqa: E402
 
 
 _BLOG_LINK_RE = re.compile(
@@ -105,7 +112,16 @@ def _parse_blog_posts(html: str, base_url: str) -> list[BlogPost]:
         else:
             date_m = _DATE_TEXT_RE.search(chunk)
             if date_m:
-                published_date = date_m.group(0)
+                if date_m.group(1):
+                    # Already ISO: "YYYY-MM-DD"
+                    published_date = date_m.group(1)
+                else:
+                    # Textual: "Month DD, YYYY" or "Month DD YYYY" — normalize to ISO
+                    raw = date_m.group(0).replace(",", "")
+                    try:  # noqa: SIM105 — explicit pass keeps intent obvious
+                        published_date = datetime.strptime(raw, "%B %d %Y").strftime("%Y-%m-%d")
+                    except ValueError:
+                        pass  # Unparseable; leave published_date as None
 
         # Author: best-effort
         author: str | None = None
@@ -133,9 +149,6 @@ def _parse_blog_posts(html: str, base_url: str) -> list[BlogPost]:
     return posts
 
 
-from rrxray.collectors._content_demand_catalog import CONTENT_KEYWORDS  # noqa: E402
-
-
 # Numeric-prefix SEO listicle pattern: "5 ways", "12 tips", "7 mistakes", etc.
 _SEO_NUMERIC_RE = re.compile(
     r"^\s*\d{1,3}\s+(ways|tips|mistakes|reasons|things|tools|strategies|tactics|examples|signs|lessons)\b",
@@ -143,7 +156,7 @@ _SEO_NUMERIC_RE = re.compile(
 )
 
 
-def _categorize_post(title: str, description: str = "") -> tuple[str, str | None]:
+def _categorize_post(title: str) -> tuple[str, str | None]:
     """Categorize a post via the keyword catalog.
 
     Order-by-specificity: CONTENT_KEYWORDS is pre-ordered (SEO listicles
@@ -155,7 +168,7 @@ def _categorize_post(title: str, description: str = "") -> tuple[str, str | None
 
     Returns (category, matched_keyword). Falls back to ("other", None).
     """
-    haystack = f"{title} {description}".lower()
+    haystack = title.lower()
 
     # SEO listicle numeric-prefix short-circuit
     if _SEO_NUMERIC_RE.search(title):
@@ -166,10 +179,6 @@ def _categorize_post(title: str, description: str = "") -> tuple[str, str | None
             if kw.lower() in haystack:
                 return entry["category"], kw
     return "other", None
-
-
-from rrxray.collectors._content_demand_catalog import LEAD_MAGNET_CTA_PATTERNS  # noqa: E402
-from rrxray.schemas.content_demand import LeadMagnet  # noqa: E402
 
 
 _FORM_NEARBY_RE = re.compile(
@@ -264,9 +273,6 @@ def _detect_lead_magnets(html: str, source_page: str) -> list[LeadMagnet]:
     return magnets
 
 
-from rrxray.collectors._content_demand_catalog import PODCAST_PATTERNS  # noqa: E402
-
-
 _RSS_LINK_RE = re.compile(
     r'<link[^>]*\brel=["\']alternate["\'][^>]*\btype=["\']application/rss\+xml["\'][^>]*>',
     re.IGNORECASE,
@@ -308,11 +314,14 @@ def _detect_podcast(homepage_html: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-from rrxray.collectors._content_demand_catalog import SUBSTACK_PATTERN  # noqa: E402
-
-
 _NEWSLETTER_BUTTON_RE = re.compile(
     r"<button[^>]*>([^<]*)</button>",
+    re.IGNORECASE,
+)
+
+_NEWSLETTER_SUBMIT_RE = re.compile(
+    r'<input[^>]*\btype=["\']submit["\'][^>]*\bvalue=["\']([^"\']+)["\']'
+    r'|<input[^>]*\bvalue=["\']([^"\']+)["\'][^>]*\btype=["\']submit["\']',
     re.IGNORECASE,
 )
 
@@ -348,17 +357,16 @@ def _detect_newsletter(homepage_html: str) -> tuple[str | None, str | None]:
             btn_text = btn_m.group(1).lower()
             if any(kw in btn_text for kw in _NEWSLETTER_KEYWORDS):
                 return "embedded_form", None
+        for submit_m in _NEWSLETTER_SUBMIT_RE.finditer(block):
+            submit_val = (submit_m.group(1) or submit_m.group(2) or "").lower()
+            if any(kw in submit_val for kw in _NEWSLETTER_KEYWORDS):
+                return "embedded_form", None
         # Heading near the form: check 200 chars before the form for a newsletter cue
         before = homepage_html[max(0, form_m.start() - 200):form_m.start()].lower()
         if any(kw in before for kw in _NEWSLETTER_KEYWORDS):
             return "embedded_form", None
 
     return None, None
-
-
-from datetime import UTC, date, datetime  # noqa: E402
-
-from rrxray.schemas._shared import Finding, SourceCitation  # noqa: E402
 
 
 def _compute_post_counts(
@@ -433,6 +441,7 @@ def _emit_findings(
     if most_recent_date:
         try:
             recent = date.fromisoformat(most_recent_date)
+            # Both sides are naive date objects; tz-agnostic comparison is intentional
             days_since = (now.date() - recent).days
             if days_since > 90:
                 findings.append(Finding(
@@ -548,12 +557,6 @@ def _emit_findings(
     return findings, gaps, questions
 
 
-import json  # noqa: E402
-from pathlib import Path  # noqa: E402
-
-from rrxray.schemas.content_demand import ContentDemandData  # noqa: E402
-
-
 def _write_evidence(
     evidence_dir: Path,
     homepage_html: str,
@@ -619,7 +622,7 @@ async def collect(ctx) -> ContentDemandData:
     if blog_html:
         parsed = _parse_blog_posts(blog_html, base_url=blog_url or homepage_url)
         for p in parsed:
-            category, matched = _categorize_post(p.title, "")
+            category, matched = _categorize_post(p.title)
             blog_posts.append(BlogPost(
                 title=p.title,
                 url=p.url,
