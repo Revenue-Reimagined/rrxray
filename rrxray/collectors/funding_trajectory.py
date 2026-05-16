@@ -215,7 +215,7 @@ async def _extract_press_rounds(
     for r in results:
         url = _get_attr(r, "url", "") or ""
         title = _get_attr(r, "title", "") or ""
-        snippet = _get_attr(r, "snippet", "") or ""
+        snippet = _get_attr(r, "snippet", "") or _get_attr(r, "description", "") or ""
         body: str | None = None
         try:
             page = await firecrawl.scrape_url(url, only_main_content=True)
@@ -363,7 +363,11 @@ def _write_evidence(
     ev.mkdir(parents=True, exist_ok=True)
     rounds_data = [r.model_dump(mode="json") for r in rounds]
     (ev / "rounds.json").write_text(json.dumps(rounds_data, indent=2, default=str))
-    (ev / "press_search.json").write_text(json.dumps(search_results, indent=2))
+    serializable = [
+        r.model_dump(mode="json") if hasattr(r, "model_dump") else (r if isinstance(r, dict) else {"url": str(r)})
+        for r in search_results
+    ]
+    (ev / "press_search.json").write_text(json.dumps(serializable, indent=2))
 
 
 async def collect(ctx: CollectorContext) -> FundingTrajectoryData:
