@@ -1,0 +1,36 @@
+{# templates/_funding_trajectory_detail.md.jinja #}
+{% set ft = data.collectors.funding_trajectory %}
+**Crunchbase URL:** {{ ft.crunchbase_url or "not found" }}
+**Crunchbase recovered:** {{ "yes" if ft.crunchbase_recovered else "no" }}
+**Implied stage:** {{ ft.implied_stage }}
+**Total raised:** {% if ft.total_raised_usd_millions %}${{ ft.total_raised_usd_millions }}M{% else %}undisclosed{% endif %}
+**Last round:** {% if ft.last_round_months_ago %}~{{ ft.last_round_months_ago }} months ago{% else %}unknown{% endif %}
+
+{% if ft.rounds %}
+| Series | Amount | Date | Lead Investor | Source |
+|---|---|---|---|---|
+{% for r in ft.rounds %}
+| {{ r.series }} | {% if r.amount_usd_millions %}${{ r.amount_usd_millions }}M{% else %}undisclosed{% endif %} | {{ r.announced_date or "unknown" }} | {{ r.lead_investor or "not stated" }} | {{ r.source_type }} |
+{% endfor %}
+{% endif %}
+
+{% if ft.findings %}
+**Findings:**
+{% for f in ft.findings %}
+- {{ f.text | voice_collector }} *(source: [{{ f.source.url }}]({{ f.source.url }}))*
+{% endfor %}
+{% endif %}
+
+{% if ft.gaps %}
+**Gaps:**
+{% for g in ft.gaps %}
+→ {{ g | voice_collector }}
+{% endfor %}
+{% endif %}
+
+{% if ft.discovery_questions %}
+**Discovery questions:**
+{% for q in ft.discovery_questions %}
+- {{ q | voice_collector }}
+{% endfor %}
+{% endif %}
