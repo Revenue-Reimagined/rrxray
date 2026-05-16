@@ -10,10 +10,12 @@ names is too patchy. Mirrors Phase 2.2 extract_exec_change amendment exactly.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
-from datetime import date, datetime
-from typing import Any
+from datetime import UTC, date, datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from rrxray.collectors._funding_trajectory_catalog import (
     AMOUNT_RE,
@@ -22,10 +24,17 @@ from rrxray.collectors._funding_trajectory_catalog import (
     DATE_RE,
     FUNDING_PRESS_QUERY_TEMPLATE,
     FUNDING_PRESS_RESULT_LIMIT,
+    RECENT_RAISE_THRESHOLD_MONTHS,
     SERIES_KEYWORDS,
+    SERIES_LABEL_MAP,
     SERIES_TO_STAGE,
+    STRETCHING_RUNWAY_THRESHOLD_MONTHS,
 )
-from rrxray.schemas.funding_trajectory import FundingRound
+from rrxray.schemas._shared import Finding, SourceCitation
+from rrxray.schemas.funding_trajectory import FundingRound, FundingTrajectoryData
+
+if TYPE_CHECKING:
+    from rrxray.context import CollectorContext
 
 NAME = "funding_trajectory"
 log = logging.getLogger(f"rrxray.collectors.{NAME}")
@@ -259,3 +268,153 @@ def _dedupe_rounds(
         return r.announced_date or date.min
 
     return sorted(all_rounds, key=_sort_key, reverse=True)
+
+
+def _compute_aggregates(
+    rounds: list[FundingRound], today: date,
+) -> tuple[float | None, int | None, str]:
+    """Return (total_raised_usd_millions, last_round_months_ago, implied_stage)."""
+    if not rounds:
+        return None, None, "bootstrapped"
+
+    # Find most recent by date (rounds already sorted reverse chrono from _dedupe_rounds)
+    dated = [r for r in rounds if r.announced_date is not None]
+    latest = dated[0] if dated else rounds[0]
+    stage = SERIES_TO_STAGE.get(latest.series, "signal_not_recovered")
+
+    last_months: int | None = None
+    if latest.announced_date:
+        days = (today - latest.announced_date).days
+        last_months = max(1, days // 30)
+
+    amounts = [r.amount_usd_millions for r in rounds if r.amount_usd_millions is not None]
+    total = round(sum(amounts), 2) if amounts else None
+
+    return total, last_months, stage
+
+
+def _emit_findings(
+    rounds: list[FundingRound],
+    last_months: int | None,
+    stage: str,
+    crunchbase_recovered: bool,
+) -> tuple[list[Finding], list[str], list[str]]:
+    """Rule-based findings, gaps, discovery_questions."""
+    source = SourceCitation(url="rrxray://funding_trajectory", timestamp=datetime.now(UTC))
+
+    findings: list[Finding] = []
+    gaps: list[str] = []
+    dqs: list[str] = []
+
+    if not rounds or stage == "signal_not_recovered":
+        findings.append(Finding(
+            text="Funding signal not recovered from public sources.",
+            source=source,
+        ))
+        dqs.append("What is the company's current funding status and capital plan?")
+        return findings, gaps, dqs
+
+    latest = rounds[0]
+    series_label = SERIES_LABEL_MAP.get(latest.series, latest.series)
+
+    if last_months is not None and last_months <= RECENT_RAISE_THRESHOLD_MONTHS:
+        findings.append(Finding(
+            text=f"Recently capitalized: {series_label} raise ~{last_months} months ago.",
+            source=source,
+        ))
+    elif last_months is not None and last_months > STRETCHING_RUNWAY_THRESHOLD_MONTHS:
+        findings.append(Finding(
+            text=(
+                f"Funding cadence stretching: last raise ({series_label}) was ~{last_months} months ago. "
+                "Runway extension is a live question."
+            ),
+            source=source,
+        ))
+    else:
+        findings.append(Finding(
+            text=f"Most recent funding: {series_label}.",
+            source=source,
+        ))
+
+    if not crunchbase_recovered:
+        gaps.append("Crunchbase profile not located; trajectory derived from press releases only.")
+
+    dqs.append("What is the company's current runway and capital deployment plan?")
+
+    return findings, gaps, dqs
+
+
+def _write_evidence(
+    evidence_dir: Path,
+    rounds: list[FundingRound],
+    search_results: list[dict],
+) -> None:
+    """Write funding evidence files."""
+    ev = Path(evidence_dir) / "funding_trajectory"
+    ev.mkdir(parents=True, exist_ok=True)
+    rounds_data = [r.model_dump(mode="json") for r in rounds]
+    (ev / "rounds.json").write_text(json.dumps(rounds_data, indent=2, default=str))
+    (ev / "press_search.json").write_text(json.dumps(search_results, indent=2))
+
+
+async def collect(ctx: CollectorContext) -> FundingTrajectoryData:
+    """Main collector entry point."""
+    today = datetime.now(UTC).date()
+    company = ctx.company_name or ctx.domain.split(".")[0].title()
+    domain = ctx.domain
+
+    crunchbase_url: str | None = None
+    crunchbase_rounds: list[FundingRound] = []
+    crunchbase_recovered = False
+
+    try:
+        crunchbase_url = await _discover_crunchbase_url(ctx.firecrawl, company, domain)
+        if crunchbase_url:
+            crunchbase_rounds = await _scrape_crunchbase(ctx.firecrawl, crunchbase_url)
+            crunchbase_recovered = len(crunchbase_rounds) > 0 or crunchbase_url is not None
+    except Exception as e:
+        log.warning("Crunchbase phase failed: %s", e)
+
+    search_results: list[dict] = []
+    press_rounds: list[FundingRound] = []
+    try:
+        search_results = await _search_funding_press(ctx.firecrawl, company)
+        press_rounds = await _extract_press_rounds(
+            search_results, ctx.extractor, company, domain, ctx.firecrawl
+        )
+    except Exception as e:
+        log.warning("Press funding search phase failed: %s", e)
+
+    rounds = _dedupe_rounds(crunchbase_rounds, press_rounds)
+    total_raised, last_months, stage = _compute_aggregates(rounds, today)
+
+    # If we couldn't recover any Crunchbase profile AND no press search results
+    # surfaced AND we have no rounds, treat as signal_not_recovered rather than
+    # "bootstrapped" (we have no evidence either way).
+    if not rounds and crunchbase_url is None and not search_results:
+        stage = "signal_not_recovered"
+
+    findings, gaps, dqs = _emit_findings(rounds, last_months, stage, crunchbase_recovered)
+
+    try:
+        _write_evidence(ctx.evidence_dir, rounds, search_results)
+    except Exception as e:
+        log.warning("Evidence write failed: %s", e)
+
+    now = datetime.now(UTC)
+    sources = [SourceCitation(url=r.source_url, timestamp=now) for r in rounds]
+    if crunchbase_url:
+        sources.insert(0, SourceCitation(url=crunchbase_url, timestamp=now))
+
+    return FundingTrajectoryData(
+        rounds=rounds,
+        total_raised_usd_millions=total_raised,
+        last_round_months_ago=last_months,
+        implied_stage=stage,
+        crunchbase_url=crunchbase_url,
+        crunchbase_recovered=crunchbase_recovered,
+        findings=findings,
+        gaps=gaps,
+        discovery_questions=dqs,
+        sources=sources,
+    )

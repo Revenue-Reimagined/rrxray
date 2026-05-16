@@ -11,14 +11,17 @@ import pytest
 
 from rrxray.collectors.funding_trajectory import (
     NAME,
+    _compute_aggregates,
     _dedupe_rounds,
     _discover_crunchbase_url,
+    _emit_findings,
     _extract_press_rounds,
     _is_crunchbase_blocked,
     _scrape_crunchbase,
     _search_funding_press,
+    collect,
 )
-from rrxray.schemas.funding_trajectory import FundingRound
+from rrxray.schemas.funding_trajectory import FundingRound, FundingTrajectoryData
 from rrxray.services.extraction import ExtractedFundingEvent
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "synthetic" / "funding_trajectory"
@@ -254,3 +257,147 @@ def test_dedupe_rounds_returns_reverse_chrono():
     result = _dedupe_rounds(rounds, [])
     assert result[0].series == "series_b"  # most recent first
     assert result[1].series == "series_a"
+
+
+# --- _compute_aggregates ---
+
+def test_compute_aggregates_most_recent_round():
+    today = date.today()
+    rounds = [
+        FundingRound(series="series_b", amount_usd_millions=25.0, announced_date=date(2024, 3, 15),
+                     source_url="https://cb.com/x", source_type="crunchbase"),
+        FundingRound(series="series_a", amount_usd_millions=8.0, announced_date=date(2022, 6, 1),
+                     source_url="https://cb.com/y", source_type="crunchbase"),
+    ]
+    total, last_months, stage = _compute_aggregates(rounds, today)
+    assert total == 33.0
+    assert last_months is not None and last_months > 0
+    assert stage == "early_growth"
+
+
+def test_compute_aggregates_no_rounds():
+    total, last_months, stage = _compute_aggregates([], date.today())
+    assert total is None
+    assert last_months is None
+    assert stage == "bootstrapped"
+
+
+def test_compute_aggregates_undisclosed_amounts():
+    rounds = [
+        FundingRound(series="series_a", amount_usd_millions=None,
+                     source_url="https://x", source_type="press"),
+    ]
+    total, _last_months, stage = _compute_aggregates(rounds, date.today())
+    assert total is None
+    assert stage == "early_growth"
+
+
+def test_compute_aggregates_ipo_stage():
+    rounds = [
+        FundingRound(series="ipo", amount_usd_millions=500.0, announced_date=date(2023, 1, 1),
+                     source_url="https://x", source_type="crunchbase"),
+    ]
+    _total, _last_months, stage = _compute_aggregates(rounds, date.today())
+    assert stage == "public"
+
+
+# --- _emit_findings ---
+
+def test_emit_findings_recent_raise():
+    rounds = [
+        FundingRound(series="series_b", amount_usd_millions=25.0,
+                     announced_date=date.today(), source_url="https://cb.com/x",
+                     source_type="crunchbase"),
+    ]
+    findings, _gaps, _dqs = _emit_findings(rounds, last_months=0, stage="early_growth", crunchbase_recovered=True)
+    texts = [f.text for f in findings]
+    assert len(findings) >= 1
+    assert any("recent" in t.lower() or "capital" in t.lower() or "0 month" in t.lower() for t in texts)
+
+
+def test_emit_findings_stretching_runway():
+    rounds = [
+        FundingRound(series="series_b", announced_date=date(2021, 1, 1),
+                     source_url="https://x", source_type="crunchbase"),
+    ]
+    findings, _gaps, _dqs = _emit_findings(rounds, last_months=52, stage="early_growth", crunchbase_recovered=True)
+    texts = [f.text for f in findings]
+    assert len(findings) >= 1
+    assert any("cadence" in t.lower() or "stretching" in t.lower() or "52" in t for t in texts)
+
+
+def test_emit_findings_signal_not_recovered():
+    findings, _gaps, dqs = _emit_findings([], last_months=None, stage="signal_not_recovered", crunchbase_recovered=False)
+    texts = [f.text for f in findings]
+    assert len(findings) >= 1
+    assert any("not recovered" in t.lower() or "public sources" in t.lower() for t in texts)
+    assert len(dqs) >= 1
+
+
+def test_emit_findings_standard_raise():
+    rounds = [
+        FundingRound(series="series_a", announced_date=date(2024, 1, 1),
+                     amount_usd_millions=8.0, source_url="https://x", source_type="crunchbase"),
+    ]
+    findings, _gaps, _dqs = _emit_findings(rounds, last_months=16, stage="early_growth", crunchbase_recovered=True)
+    assert len(findings) >= 1
+
+
+# --- collect() ---
+
+def test_collect_returns_data_on_crunchbase_success(fake_firecrawl, tmp_path):
+    fake_firecrawl.search.return_value = [
+        {"url": "https://www.crunchbase.com/organization/acme", "title": "Acme - Crunchbase", "snippet": ""}
+    ]
+    fake_firecrawl.scrape_url.return_value = {"html": _load_fixture("crunchbase_org_page.html"), "markdown": ""}
+
+    ctx = MagicMock()
+    ctx.firecrawl = fake_firecrawl
+    ctx.domain = "acme.com"
+    ctx.company_name = "Acme"
+    ctx.evidence_dir = tmp_path
+    ctx.extractor = MagicMock()
+    ctx.extractor.extract_funding_event = AsyncMock(return_value=None)
+
+    data = asyncio.run(collect(ctx))
+    assert isinstance(data, FundingTrajectoryData)
+    assert data.crunchbase_recovered is True
+    assert len(data.rounds) >= 1
+    assert data.implied_stage != "signal_not_recovered"
+
+
+def test_collect_graceful_on_total_failure(fake_firecrawl, tmp_path):
+    fake_firecrawl.search.side_effect = Exception("network error")
+
+    ctx = MagicMock()
+    ctx.firecrawl = fake_firecrawl
+    ctx.domain = "broken.io"
+    ctx.company_name = "Broken Co"
+    ctx.evidence_dir = tmp_path
+    ctx.extractor = MagicMock()
+    ctx.extractor.extract_funding_event = AsyncMock(return_value=None)
+
+    data = asyncio.run(collect(ctx))
+    assert isinstance(data, FundingTrajectoryData)
+    assert data.implied_stage == "signal_not_recovered"
+    assert data.rounds == []
+
+
+def test_collect_writes_evidence_files(fake_firecrawl, tmp_path):
+    fake_firecrawl.search.return_value = [
+        {"url": "https://www.crunchbase.com/organization/acme", "title": "Acme - Crunchbase", "snippet": ""}
+    ]
+    fake_firecrawl.scrape_url.return_value = {"html": _load_fixture("crunchbase_org_page.html"), "markdown": ""}
+
+    ctx = MagicMock()
+    ctx.firecrawl = fake_firecrawl
+    ctx.domain = "acme.com"
+    ctx.company_name = "Acme"
+    ctx.evidence_dir = tmp_path
+    ctx.extractor = MagicMock()
+    ctx.extractor.extract_funding_event = AsyncMock(return_value=None)
+
+    asyncio.run(collect(ctx))
+    evidence_dir = tmp_path / "funding_trajectory"
+    assert evidence_dir.exists()
+    assert (evidence_dir / "rounds.json").exists()
