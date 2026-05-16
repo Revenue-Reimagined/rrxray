@@ -7,7 +7,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from rrxray.collectors._revenue_motion_catalog import ATS_PATTERNS, ROLE_KEYWORDS
 from rrxray.schemas._shared import Finding, SourceCitation
@@ -83,6 +83,31 @@ _LINK_RE = re.compile(
     re.IGNORECASE,
 )
 
+_ATS_DOMAINS = frozenset({
+    "greenhouse.io", "lever.co", "workday.com", "myworkdayjobs.com",
+    "ashbyhq.com", "bamboohr.com", "smartrecruiters.com", "jobvite.com",
+    "icims.com", "taleo.net", "paylocity.com", "breezy.hr", "recruitee.com",
+    "workable.com", "jazz.co", "applytojob.com", "rippling.com",
+})
+
+
+def _is_job_posting_href(href: str, base_url: str) -> bool:
+    """Return True if href points to a job posting (ATS domain or sub-path of careers URL)."""
+    if not href or href.startswith("#"):
+        return False
+    full = urljoin(base_url, href)
+    parsed = urlparse(full)
+    netloc = parsed.netloc.lower()
+    for ats in _ATS_DOMAINS:
+        if netloc == ats or netloc.endswith("." + ats):
+            return True
+    base_parsed = urlparse(base_url)
+    if parsed.netloc == base_parsed.netloc:
+        base_path = base_parsed.path.rstrip("/")
+        link_path = parsed.path.rstrip("/")
+        return link_path != base_path and link_path.startswith(base_path + "/")
+    return False
+
 
 def _extract_roles(html: str, source: str, base_url: str) -> list[JobPosting]:
     """Extract job postings from HTML anchor tags, categorized via the role catalog."""
@@ -96,6 +121,8 @@ def _extract_roles(html: str, source: str, base_url: str) -> list[JobPosting]:
         if not title or len(title) > 200:
             continue
         if title in seen_titles:
+            continue
+        if not _is_job_posting_href(href, base_url):
             continue
         seen_titles.add(title)
         category, matched = _categorize_title(title)

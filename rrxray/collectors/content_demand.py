@@ -7,7 +7,7 @@ import re
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from rrxray.collectors._content_demand_catalog import (
     CONTENT_KEYWORDS,
@@ -48,6 +48,21 @@ _BLOG_LINK_RE = re.compile(
     r'<a[^>]*\bhref=["\']([^"\']+)["\'][^>]*>([^<]+)</a>',
     re.IGNORECASE,
 )
+
+
+def _is_blog_post_href(href: str, base_url: str) -> bool:
+    """Return True if href looks like a blog post (sub-path of blog index, not nav)."""
+    if not href or href.startswith("#"):
+        return False
+    full = urljoin(base_url, href)
+    parsed = urlparse(full)
+    base_parsed = urlparse(base_url)
+    if parsed.netloc != base_parsed.netloc:
+        return False
+    base_path = base_parsed.path.rstrip("/")
+    link_path = parsed.path.rstrip("/")
+    return link_path != base_path and link_path.startswith(base_path + "/")
+
 
 # Match <time datetime="2026-04-15"> or <time datetime="2026-04-15T10:00:00Z">
 _TIME_DATETIME_RE = re.compile(
@@ -91,8 +106,7 @@ def _parse_blog_posts(html: str, base_url: str) -> list[BlogPost]:
         title = m.group(2).strip()
         if not title or len(title) > 250:
             continue
-        # Skip obvious nav links
-        if title.lower() in {"home", "about", "contact", "blog", "insights", "next", "previous"}:
+        if not _is_blog_post_href(href, base_url):
             continue
         if title in seen_titles:
             continue
