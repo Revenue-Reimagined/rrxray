@@ -1,6 +1,6 @@
 # rrxray Roadmap
 
-**Last updated:** 2026-05-07
+**Last updated:** 2026-05-16
 
 The Phase 1 foundation has shipped. This file tracks what's next, what's deferred, and the design decisions behind each.
 
@@ -39,6 +39,7 @@ The Phase 1 foundation has shipped. This file tracks what's next, what's deferre
 - `revenue_motion`: scrape careers page, parse JD titles + comp ranges + locations. Infer AE-to-SDR ratio, motion type (PLG / outbound / inbound / hybrid), enterprise vs mid-market vs SMB signals
 - `tech_stack`: scrape site source for analytics/martech tags (Segment, GTM, HubSpot, Marketo, Intercom, Drift, Pendo, etc.). Cross-reference public BuiltWith profile if available
 - `funding_trajectory`: Crunchbase public profile + press release search. Last-raise date, total raised, implied stage. Headcount-from-LinkedIn estimated via Google cache snippets
+  - **2026-05-16:** Phase 2.4a shipped — funding_trajectory collector (Crunchbase public profile + press search; LLM extraction via Haiku 4.5 for unstructured press body text). Section B synthesizer extended with 7 StabilityAggregates fields + funding lens prompt block + 2 new hypothesis bullets ("Stable, funded-and-running", "Stretching runway"). Module Detail Appendix partial. 68 new tests; total 536 passing; ruff clean. Quality gate: 3-domain smoke (Swayable/YC-seed, Healthicity/professionalized, Linear/bootstrapped) + Opus code review (3 post-review fixes: press-press dedup, unrecognized LLM series drop, evidence serialization + epoch-date guard). No new paid data partners. Known V1 limitation: Crunchbase regex tuned to synthetic fixture; real pages may fall back to press-only path.
 - `customer_concentration`: scrape logo wall, case studies index, G2 listing. Cluster customers by vertical and segment
 - `content_demand`: blog index crawl, count posts by month for last 12 months, detect cadence drops. Web search for podcast appearances
   - **2026-05-15:** Phase 2.1d shipped — content_demand collector + Section A synthesizer updated to read four signals. Blog cadence + post-category mix (8 categories) + lead-magnet posture + podcast (Apple/Spotify/RSS) + newsletter (Substack/embedded-form). Section A is now complete: pricing_packaging + tech_stack + revenue_motion + content_demand. 75 new tests; total 468 passing; ruff clean. Quality gate: 3-domain smoke (Swayable, Healthicity, linear.app) + Opus code review (7 review findings fixed). Known V1 limitation: blog-page nav links parsed as blog posts on some sites; synthesizer handles gracefully.
