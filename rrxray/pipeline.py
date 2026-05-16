@@ -10,6 +10,7 @@ from importlib.metadata import version
 
 from rrxray.collectors import (
     content_demand,
+    funding_trajectory,
     leadership_stability,
     pricing_packaging,
     revenue_motion,
@@ -47,6 +48,7 @@ COLLECTORS = [
     revenue_motion,
     content_demand,
     leadership_stability,
+    funding_trajectory,
 ]
 SYNTHESIZERS = [
     observed_gtm_motion,
