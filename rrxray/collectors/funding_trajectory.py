@@ -240,6 +240,9 @@ async def _extract_press_rounds(
             except ValueError:
                 announced = None
         series = event.series if event.series in SERIES_TO_STAGE else "unknown"
+        if series == "unknown" and event.series not in ("unknown", None, ""):
+            # LLM returned an unrecognized series label; drop rather than emit a noise row
+            continue
         rounds.append(FundingRound(
             series=series,
             amount_usd_millions=event.amount_usd_millions,
@@ -256,12 +259,18 @@ def _dedupe_rounds(
     crunchbase_rounds: list[FundingRound],
     press_rounds: list[FundingRound],
 ) -> list[FundingRound]:
-    """Crunchbase wins on same series; press rounds with no CB match are kept.
+    """Crunchbase wins on same series; press rounds with no CB match are kept;
+    press rounds deduped by series (first occurrence wins).
 
     Returns rounds in reverse chronological order (most recent first).
     """
     cb_series = {r.series for r in crunchbase_rounds}
-    unique_press = [r for r in press_rounds if r.series not in cb_series]
+    unique_press: list[FundingRound] = []
+    seen_press_series: set[str] = set()
+    for r in press_rounds:
+        if r.series not in cb_series and r.series not in seen_press_series:
+            unique_press.append(r)
+            seen_press_series.add(r.series)
     all_rounds = crunchbase_rounds + unique_press
 
     def _sort_key(r: FundingRound) -> date:

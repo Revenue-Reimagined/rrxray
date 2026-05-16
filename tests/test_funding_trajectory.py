@@ -195,6 +195,26 @@ def test_extract_press_rounds_calls_extractor_per_result(fake_firecrawl):
     assert rounds[0].amount_usd_millions == 25.0
 
 
+def test_extract_press_rounds_drops_unrecognized_series(fake_firecrawl):
+    """An LLM-returned series string not in SERIES_TO_STAGE should be dropped."""
+    fake_extractor = MagicMock()
+    fake_extractor.extract_funding_event = AsyncMock(return_value=ExtractedFundingEvent(
+        series="growth equity",  # not in SERIES_TO_STAGE
+        amount_usd_millions=15.0,
+        is_relevant=True,
+        announced_date="2024-01-01",
+        lead_investor=None,
+    ))
+    fake_firecrawl.scrape_url.return_value = {"html": "", "markdown": ""}
+    rounds = asyncio.run(
+        _extract_press_rounds(
+            [{"url": "https://example.com/raise", "title": "Acme raises $15M", "snippet": "Acme raised."}],
+            fake_extractor, "Acme", "acme.com", fake_firecrawl,
+        )
+    )
+    assert rounds == []
+
+
 def test_extract_press_rounds_skips_irrelevant(fake_firecrawl):
     fake_extractor = MagicMock()
     fake_extractor.extract_funding_event = AsyncMock(return_value=None)
@@ -245,6 +265,25 @@ def test_dedupe_rounds_deduplicates_by_series_when_no_dates():
     result = _dedupe_rounds([cb], [press])
     assert len(result) == 1
     assert result[0].source_type == "crunchbase"
+
+
+def test_dedupe_rounds_deduplicates_press_press_same_series():
+    """Two press articles about same raise should not double-count."""
+    press_a = FundingRound(
+        series="series_b", amount_usd_millions=25.0,
+        announced_date=date(2024, 3, 15),
+        source_url="https://techcrunch.com/2024/03/15/acme-25m",
+        source_type="press",
+    )
+    press_b = FundingRound(
+        series="series_b", amount_usd_millions=25.0,
+        announced_date=date(2024, 3, 16),
+        source_url="https://businesswire.com/2024/03/15/acme-series-b",
+        source_type="press",
+    )
+    result = _dedupe_rounds([], [press_a, press_b])
+    assert len(result) == 1
+    assert result[0].source_url == press_a.source_url
 
 
 def test_dedupe_rounds_returns_reverse_chrono():
