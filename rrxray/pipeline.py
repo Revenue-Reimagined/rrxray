@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from importlib.metadata import version
 
 from rrxray.collectors import (
+    content_demand,
     leadership_stability,
     pricing_packaging,
     revenue_motion,
@@ -44,6 +45,7 @@ COLLECTORS = [
     pricing_packaging,
     tech_stack,
     revenue_motion,
+    content_demand,
     leadership_stability,
 ]
 SYNTHESIZERS = [

@@ -446,3 +446,92 @@ def test_synth_reads_raw_page_text_into_prompt(tmp_path):
     user_msg = fake_anthropic.complete_with_cached_system.call_args.kwargs["user_message"]
     assert "SENTINEL_PRICING_RAW_TEXT" in user_msg
     assert "SENTINEL_HOMEPAGE_RAW_TEXT" in user_msg
+
+
+def test_synth_runs_with_four_collectors():
+    """When all four Section A collectors are present, all four blocks render in the user message."""
+    from rrxray.schemas.content_demand import BlogPost, ContentDemandData, LeadMagnet
+    from rrxray.schemas.revenue_motion import JobPosting, RevenueMotionData
+
+    pricing = PricingPackagingData(
+        has_public_pricing=True, is_contact_us_gated=False,
+        current_pricing_url="https://example.com/pricing",
+        current_tiers=[PricingTier(name="Pro", price="$50", cadence="month")],
+    )
+    tech = TechStackData(
+        detected_tools=[DetectedTool(
+            name="HubSpot", category="marketing_automation", confidence="high",
+            signature_id="hubspot:strict_js", matched_text="x",
+        )],
+        categories_observed=["marketing_automation"],
+        categories_absent=["analytics", "tag_manager", "chat", "product_analytics",
+                           "crm", "cdp", "ab_testing", "attribution"],
+    )
+    rm = RevenueMotionData(
+        careers_page_url="https://example.com/careers",
+        ats_platform="lever",
+        open_roles=[
+            JobPosting(title="Senior AE", category="ae", source="company_careers"),
+        ],
+        role_counts={"ae": 1},
+    )
+    cd = ContentDemandData(
+        blog_index_url="https://example.com/blog",
+        blog_posts=[BlogPost(title="The Future of Revenue", category="thought_leadership")],
+        post_counts_by_category={"thought_leadership": 1},
+        most_recent_post_date="2026-04-15",
+        lead_magnets=[LeadMagnet(title="The Playbook", asset_type="ebook",
+                                 source_page="homepage", has_form_gate=True)],
+        podcast_platform="apple_podcasts",
+        podcast_name="The Revenue Show",
+        newsletter_platform="substack",
+    )
+
+    fake_anthropic = MagicMock()
+    fake_anthropic.complete_with_cached_system = AsyncMock(
+        return_value=make_anthropic_response(
+            ["Four-signal narrative."],
+            ["Multi-signal observation"],
+        ),
+    )
+    config = MagicMock(domain="example.com", model="claude-sonnet-4-6")
+    config.evidence_dir = MagicMock()
+    ctx = SynthesizerContext(
+        collector_outputs=CollectorOutputs(
+            pricing_packaging=pricing,
+            tech_stack=tech,
+            revenue_motion=rm,
+            content_demand=cd,
+        ),
+        anthropic=fake_anthropic,
+        voice=VoicePostProcessor(),
+        anonymizer=Anonymizer(),
+        config=config,
+    )
+
+    result = asyncio.run(observed_gtm_motion.synthesize(ctx))
+    assert result is not None
+    user_msg = ctx.anthropic.complete_with_cached_system.call_args.kwargs["user_message"]
+    assert "Pricing & Packaging signal" in user_msg
+    assert "Tech Stack signal" in user_msg
+    assert "Revenue Motion signal" in user_msg
+    assert "Content Demand signal" in user_msg
+    assert "The Future of Revenue" in user_msg
+    assert "apple_podcasts" in user_msg
+    assert "substack" in user_msg
+
+
+def test_synth_skips_when_all_four_collectors_absent():
+    """If all four Section A collectors are None, synthesizer returns None."""
+    fake_anthropic = MagicMock()
+    config = MagicMock(domain="example.com", model="claude-sonnet-4-6")
+    config.evidence_dir = MagicMock()
+    ctx = SynthesizerContext(
+        collector_outputs=CollectorOutputs(),
+        anthropic=fake_anthropic,
+        voice=VoicePostProcessor(),
+        anonymizer=Anonymizer(),
+        config=config,
+    )
+    result = asyncio.run(observed_gtm_motion.synthesize(ctx))
+    assert result is None

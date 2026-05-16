@@ -1119,6 +1119,12 @@ git commit -m "Add content categorization: 8-category keyword catalog + SEO list
 - Modify: `tests/test_content_demand.py` (append lead-magnet tests)
 - Create: `tests/fixtures/synthetic/content_demand/blog_with_lead_magnets.html`
 
+### Note on T7 adaptations
+
+Two bugs were caught against the verbatim code during the original execution (commit `aef24a8`) and the Step 3 block below now reflects the working version, not the initial draft. Re-executors should keep both adaptations.
+
+First, anchor selection inside the +/-400-char match window must prefer an anchor whose anchor-text contains the matched pattern; falling back to the first anchor in the window picks up an unrelated earlier link (e.g. a nav link) and produces wrong `title` / `url` pairs. Second, the form-gate proximity check searches forward-only from the match (not over the full +/-400-char window) and clips at the next `<h1-6>` or `</section>` boundary, so an unrelated next-section signup form does not bleed in and falsely flag `has_form_gate=True`. The synthetic fixture has adjacent sections with and without form gates, so both adaptations are required for the tests to pass.
+
 - [ ] **Step 1: Create the lead-magnets fixture**
 
 `tests/fixtures/synthetic/content_demand/blog_with_lead_magnets.html`:
@@ -1246,10 +1252,21 @@ def _detect_lead_magnets(html: str, source_page: str) -> list[LeadMagnet]:
                 end = min(len(html), m.end() + 400)
                 window = html[start:end]
 
-                anchor_m = re.search(
+                # Prefer an anchor whose text contains the match (so a CTA
+                # like "Try the calculator" wins over an unrelated earlier
+                # anchor in the same window). Fall back to the first anchor
+                # in the window otherwise.
+                anchor_re = re.compile(
                     r'<a[^>]*\bhref=["\']([^"\']+)["\'][^>]*>([^<]+)</a>',
-                    window, re.IGNORECASE,
+                    re.IGNORECASE,
                 )
+                anchor_m = None
+                for cand in anchor_re.finditer(window):
+                    if pattern.lower() in cand.group(2).lower():
+                        anchor_m = cand
+                        break
+                if anchor_m is None:
+                    anchor_m = anchor_re.search(window)
                 if anchor_m:
                     url = anchor_m.group(1).strip()
                     title = anchor_m.group(2).strip()
@@ -1269,7 +1286,18 @@ def _detect_lead_magnets(html: str, source_page: str) -> list[LeadMagnet]:
                     continue
                 seen_keys.add(key)
 
-                has_form_gate = bool(_FORM_NEARBY_RE.search(window))
+                # Form-gate proximity: look forward from the match for a
+                # <form> with an email input, but stop at the next section
+                # boundary (next <h1-6> or </section>) so we don't bleed
+                # into the following lead-magnet's form.
+                forward = html[m.end():m.end() + 600]
+                boundary_m = re.search(
+                    r"</section\s*>|<h[1-6]\b", forward, re.IGNORECASE,
+                )
+                forward_clipped = (
+                    forward[: boundary_m.start()] if boundary_m else forward
+                )
+                has_form_gate = bool(_FORM_NEARBY_RE.search(forward_clipped))
 
                 magnets.append(LeadMagnet(
                     title=title,

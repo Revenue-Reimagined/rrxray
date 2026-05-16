@@ -46,6 +46,7 @@ class CollectorOutputs(BaseModel):
     pricing_packaging: "PricingPackagingData | None" = None  # forward ref
     tech_stack: "TechStackData | None" = None  # forward ref
     revenue_motion: "RevenueMotionData | None" = None  # forward ref
+    content_demand: "ContentDemandData | None" = None  # forward ref
     leadership_stability: "LeadershipStabilityData | None" = None  # forward ref
 
 
@@ -88,6 +89,7 @@ class XrayData(BaseModel):
 
 
 # Resolve forward references
+from rrxray.schemas.content_demand import ContentDemandData  # noqa: E402
 from rrxray.schemas.leadership_stability import LeadershipStabilityData  # noqa: E402
 from rrxray.schemas.pricing_packaging import PricingPackagingData  # noqa: E402
 from rrxray.schemas.revenue_motion import RevenueMotionData  # noqa: E402

@@ -1,0 +1,52 @@
+{% set cd = data.collectors.content_demand %}
+**Blog index:** {{ cd.blog_index_url or "not found" }}
+**Total recent posts captured:** {{ cd.blog_posts | length }}
+**Most recent post date:** {{ cd.most_recent_post_date or "unknown" }}
+
+{% if cd.post_counts_by_category %}
+| Category | Count |
+|---|---|
+{% for category, count in cd.post_counts_by_category.items() %}
+| {{ category }} | {{ count }} |
+{% endfor %}
+{% endif %}
+
+{% if cd.blog_posts %}
+**Recent posts:**
+
+{% for post in cd.blog_posts[:15] %}
+- [{{ post.category }}] {{ post.title | voice_collector }}{% if post.author %} (by {{ post.author }}){% endif %}{% if post.published_date %} ({{ post.published_date }}){% endif %}
+{% endfor %}
+{% endif %}
+
+**Lead magnets:** {{ cd.lead_magnets | length }}
+{% if cd.lead_magnets %}
+{% for lm in cd.lead_magnets[:10] %}
+- [{{ lm.asset_type }}{% if lm.has_form_gate %}, gated{% endif %}] {{ lm.title | voice_collector }} (source: {{ lm.source_page }})
+{% endfor %}
+{% endif %}
+
+**Podcast:** {{ cd.podcast_platform or "not detected" }}{% if cd.podcast_name %} ({{ cd.podcast_name }}){% endif %}
+**Newsletter:** {{ cd.newsletter_platform or "not detected" }}{% if cd.newsletter_archive_url %} ({{ cd.newsletter_archive_url }}){% endif %}
+
+{% if cd.findings %}
+**Findings:**
+
+{% for f in cd.findings %}
+- {{ f.text | voice_collector }} *(source: [{{ f.source.url }}]({{ f.source.url }}))*
+{% endfor %}
+{% endif %}
+
+{% if cd.gaps %}
+**Gaps:**
+{% for g in cd.gaps %}
+→ {{ g | voice_collector }}
+{% endfor %}
+{% endif %}
+
+{% if cd.discovery_questions %}
+**Discovery questions:**
+{% for q in cd.discovery_questions %}
+- {{ q | voice_collector }}
+{% endfor %}
+{% endif %}

@@ -49,6 +49,18 @@ A company's GTM motion can be inferred by reading multiple signals together:
 - Marketing leadership posted with no marketing ops = building demand-gen function from scratch
 - LinkedIn job count significantly different from careers page count = channel-specific recruiting
 
+**Content posture (content_demand) tells you:**
+
+- Heavy thought leadership = enterprise positioning, sales-led brand-building
+- All SEO listicles = paid-acquisition supplement, top-of-funnel content shop, often outsourced
+- Founder essays dominant = personal-brand strategy, niche positioning, often early-stage
+- Many lead magnets = funnel-driven email-capture motion (typically pairs with HubSpot/Marketo stack)
+- 0 lead magnets despite blog = trust-building only, conversion happens elsewhere or not at all
+- Stale blog (>90 days) = content function de-prioritized; check pivot vs. defund
+- Podcast + heavy thought leadership = brand-category investment, ABM-adjacent positioning
+- Newsletter (especially Substack) = founder-direct distribution, not corporate funnel
+- No detectable content = relationship-led GTM; pipeline does not run through content channels
+
 **Raw page positioning copy tells you:**
 
 - Hero headline = self-described value proposition (often diverges from what buyers say)
@@ -145,6 +157,43 @@ Findings from the collector:
 {% endif %}
 {% else %}
 **Revenue Motion signal:** not collected.
+{% endif %}
+
+{% if content_demand %}
+**Content Demand signal**
+
+- Blog index: {{ content_demand.blog_index_url or "not found" }}
+- Total recent posts captured: {{ content_demand.blog_posts | length }}
+- Most recent post date: {{ content_demand.most_recent_post_date or "unknown" }}
+
+Post counts by category:
+{% for category, count in content_demand.post_counts_by_category.items() %}
+- {{ category }}: {{ count }}
+{% endfor %}
+
+Specific recent posts:
+{% for post in content_demand.blog_posts[:10] %}
+- [{{ post.category }}] {{ post.title }}{% if post.author %} (by {{ post.author }}){% endif %}{% if post.published_date %} ({{ post.published_date }}){% endif %}
+{% endfor %}
+
+Lead magnets visible: {{ content_demand.lead_magnets | length }}
+{% for lm in content_demand.lead_magnets[:5] %}
+- [{{ lm.asset_type }}{% if lm.has_form_gate %}, gated{% endif %}] {{ lm.title }}
+{% endfor %}
+
+Podcast: {{ content_demand.podcast_platform or "not detected" }}{% if content_demand.podcast_name %} ({{ content_demand.podcast_name }}){% endif %}
+Newsletter: {{ content_demand.newsletter_platform or "not detected" }}
+
+Findings from the collector:
+{% if content_demand.findings %}
+{% for f in content_demand.findings %}
+- {{ f.text }}
+{% endfor %}
+{% else %}
+(none)
+{% endif %}
+{% else %}
+**Content Demand signal:** not collected.
 {% endif %}
 
 {% if raw_pricing_text %}
