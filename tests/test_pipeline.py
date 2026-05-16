@@ -137,3 +137,17 @@ def test_pipeline_skips_pdl_when_api_key_is_empty_string(tmp_path):
 
     ctx = build_collector_context(config)
     assert ctx.leadership_enrichment is None
+
+
+def test_funding_trajectory_in_collectors():
+    from rrxray.pipeline import COLLECTORS
+    names = [c.NAME for c in COLLECTORS]
+    assert "funding_trajectory" in names
+
+
+def test_funding_trajectory_after_leadership_stability():
+    from rrxray.pipeline import COLLECTORS
+    names = [c.NAME for c in COLLECTORS]
+    lt_idx = names.index("leadership_stability")
+    ft_idx = names.index("funding_trajectory")
+    assert ft_idx > lt_idx
