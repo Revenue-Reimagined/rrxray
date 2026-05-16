@@ -108,9 +108,11 @@ def _parse_date(text: str) -> date | None:
     if not m:
         return None
     raw = m.group(0).replace(",", "")
+    min_date = date(2000, 1, 1)
     for fmt in ("%Y-%m-%d", "%B %d %Y", "%b %d %Y", "%B %Y", "%b %Y"):
         try:
-            return datetime.strptime(raw, fmt).date()
+            d = datetime.strptime(raw, fmt).date()
+            return d if d >= min_date else None
         except ValueError:
             continue
     return None
