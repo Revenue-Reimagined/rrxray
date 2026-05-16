@@ -45,6 +45,14 @@ class StabilityAggregates(BaseModel):
     prior_employer_signals: dict[str, str | None] = Field(default_factory=dict)
     enrichment_aborted_reason: str = "disabled"
     enrichment_spend_dollars: float = 0.0
+    # Phase 2.4a additions
+    funding_recovered: bool = False
+    last_round_series: str | None = None
+    last_round_months_ago: int | None = None
+    last_round_amount_usd_millions: float | None = None
+    total_raised_usd_millions: float | None = None
+    implied_stage: str = "signal_not_recovered"
+    recent_rounds: list[dict] = Field(default_factory=list)
 
 
 class NarrativeResponse(BaseModel):
@@ -59,7 +67,7 @@ def _load_system_prompt() -> str:
     return files("rrxray.prompts").joinpath("synthesizer_system.md").read_text()
 
 
-def _build_aggregates(data: LeadershipStabilityData) -> StabilityAggregates:
+def _build_aggregates(data: LeadershipStabilityData, funding=None) -> StabilityAggregates:
     """Pre-aggregate LeadershipStabilityData into a name-free structure."""
     today = datetime.now(UTC).date()
 
@@ -171,6 +179,30 @@ def _build_aggregates(data: LeadershipStabilityData) -> StabilityAggregates:
     enrichment_aborted_reason = data.enrichment_metadata.aborted_reason
     enrichment_spend_dollars = data.enrichment_metadata.spend_dollars
 
+    # Phase 2.4a: funding trajectory fields
+    funding_recovered = False
+    last_round_series = None
+    last_round_months_ago_val = None
+    last_round_amount_usd_millions = None
+    total_raised_usd_millions = None
+    implied_stage = "signal_not_recovered"
+    recent_rounds_list: list[dict] = []
+
+    if funding is not None:
+        funding_recovered = funding.crunchbase_recovered or len(funding.rounds) > 0
+        implied_stage = funding.implied_stage
+        total_raised_usd_millions = funding.total_raised_usd_millions
+        last_round_months_ago_val = funding.last_round_months_ago
+        if funding.rounds:
+            latest = funding.rounds[0]
+            last_round_series = latest.series
+            last_round_amount_usd_millions = latest.amount_usd_millions
+            for r in funding.rounds[:5]:
+                recent_rounds_list.append({
+                    "series": r.series,
+                    "announced_date": r.announced_date.isoformat() if r.announced_date else None,
+                })
+
     return StabilityAggregates(
         seat_changes=seat_changes,
         seat_change_ages_months=seat_change_ages,
@@ -187,6 +219,14 @@ def _build_aggregates(data: LeadershipStabilityData) -> StabilityAggregates:
         prior_employer_signals=prior_employer_signals,
         enrichment_aborted_reason=enrichment_aborted_reason,
         enrichment_spend_dollars=enrichment_spend_dollars,
+        # Phase 2.4a fields
+        funding_recovered=funding_recovered,
+        last_round_series=last_round_series,
+        last_round_months_ago=last_round_months_ago_val,
+        last_round_amount_usd_millions=last_round_amount_usd_millions,
+        total_raised_usd_millions=total_raised_usd_millions,
+        implied_stage=implied_stage,
+        recent_rounds=recent_rounds_list,
     )
 
 
@@ -205,7 +245,8 @@ async def synthesize(ctx: SynthesizerContext) -> ObservedStabilityTrajectoryNarr
         log.info("leadership_stability collector absent; skipping observed_stability_trajectory synthesis")
         return None
 
-    aggregates = _build_aggregates(leadership)
+    funding = ctx.collector_outputs.funding_trajectory
+    aggregates = _build_aggregates(leadership, funding=funding)
     system_prompt = _load_system_prompt()
     user_message = _render_user_message(ctx.config.domain, aggregates)
 

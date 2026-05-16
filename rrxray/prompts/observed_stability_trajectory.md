@@ -74,6 +74,23 @@ Note: PDL enrichment was partial. Some incumbents may lack tenure / prior-employ
 - (none)
 {% endif %}
 
+**Funding trajectory signal:**
+{% if aggregates.funding_recovered %}
+- Most recent round: {{ aggregates.last_round_series }}{% if aggregates.last_round_months_ago is not none %} ~{{ aggregates.last_round_months_ago }} months ago{% endif %}{% if aggregates.last_round_amount_usd_millions %} (${{ aggregates.last_round_amount_usd_millions }}M){% endif %}
+- Total raised across recovered rounds: {% if aggregates.total_raised_usd_millions %}${{ aggregates.total_raised_usd_millions }}M{% else %}not disclosed{% endif %}
+- Implied stage: {{ aggregates.implied_stage }}
+- Round history (latest first): {% for r in aggregates.recent_rounds %}{{ r.series }}{% if r.announced_date %} ({{ r.announced_date }}){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}
+
+**Funding lens interpretation guidance:**
+- Last round 12 months ago or less: recently capitalized; expect scaling motion (cross-reference recent exec hires in leadership signal)
+- Last round 12-24 months ago: mid-cycle; motion likely stable, watch for next-round signals in hiring
+- Last round more than 24 months ago AND no recent hires: discovery should establish runway extension and burn-rate plan
+- Last round more than 24 months ago AND aggressive recent hires: likely either revenue-funded scaling or impending raise; ask on call
+- Bootstrapped (no rounds detected) AND multi-year incumbent CEO: founder-led discipline; capital efficiency is the brand
+{% else %}
+- Funding signal not recovered from public sources. Do not speculate on cap-table position or runway.
+{% endif %}
+
 ## Diagnostic posture
 
 Commit to a single hypothesis about this company's leadership stability and trajectory. Do not enumerate possibilities; pick the strongest read of the data and write it.
@@ -83,6 +100,8 @@ Possible hypotheses:
 - **Stable, professionalized** — non-founder CEO with tenure, no recent changes
 - **In active transition** — one or more recent exec changes (≤9 months); motion direction likely shifting
 - **Unstable / churning** — multiple changes in same seat in past 18 months; motion uncertainty high
+- **Stable, funded-and-running** — leadership stable AND last raise 18 months ago or less; motion is likely scaling on recent capital
+- **Stretching runway** — last raise more than 24 months ago + no recent exec hires + no public round announcement; discovery should establish capital plan
 - **Signal not recovered** — public sources insufficient to commit to a hypothesis; discovery must establish
 
 Output 2-4 paragraphs. Each paragraph commits to a specific observation and its diagnostic implication. Use → for recommendation bullets when applicable. Avoid em dashes; use commas, periods, or colons. Do not use the words: leverage, leveraging, leveraged, synergies, synergy, holistic, streamline, impactful. Use GTM Gap™ on first reference if relevant.
