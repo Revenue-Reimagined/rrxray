@@ -20,7 +20,10 @@ from rrxray.collectors._funding_trajectory_catalog import (
     CRUNCHBASE_BLOCKED_PHRASES,
     CRUNCHBASE_SEARCH_QUERY_TEMPLATE,
     DATE_RE,
+    FUNDING_PRESS_QUERY_TEMPLATE,
+    FUNDING_PRESS_RESULT_LIMIT,
     SERIES_KEYWORDS,
+    SERIES_TO_STAGE,
 )
 from rrxray.schemas.funding_trajectory import FundingRound
 
@@ -179,3 +182,80 @@ async def _scrape_crunchbase(
     if not html or _is_crunchbase_blocked(html):
         return []
     return _parse_crunchbase_html(html, crunchbase_url)
+
+
+async def _search_funding_press(firecrawl: Any, company: str) -> list[dict]:
+    """Search for funding press releases about the company."""
+    query = FUNDING_PRESS_QUERY_TEMPLATE.format(company=company)
+    try:
+        return await firecrawl.search(query, limit=FUNDING_PRESS_RESULT_LIMIT)
+    except Exception as e:
+        log.debug("Funding press search failed: %s", e)
+        return []
+
+
+async def _extract_press_rounds(
+    results: list[dict],
+    extractor: Any,
+    company: str,
+    domain: str,
+    firecrawl: Any,
+) -> list[FundingRound]:
+    """For each search result, scrape body and call extract_funding_event."""
+    rounds: list[FundingRound] = []
+    for r in results:
+        url = _get_attr(r, "url", "") or ""
+        title = _get_attr(r, "title", "") or ""
+        snippet = _get_attr(r, "snippet", "") or ""
+        body: str | None = None
+        try:
+            page = await firecrawl.scrape_url(url, only_main_content=True)
+            body = _get_attr(page, "markdown", None) or _get_attr(page, "html", None)
+            if body and len(body) > 8000:
+                body = body[:8000]
+        except Exception:
+            pass
+        event = await extractor.extract_funding_event(
+            title=title,
+            snippet=snippet,
+            target_company=company,
+            target_domain=domain,
+            body=body,
+        )
+        if event is None:
+            continue
+        announced: date | None = None
+        if event.announced_date:
+            try:
+                announced = datetime.strptime(event.announced_date, "%Y-%m-%d").date()
+            except ValueError:
+                announced = None
+        series = event.series if event.series in SERIES_TO_STAGE else "unknown"
+        rounds.append(FundingRound(
+            series=series,
+            amount_usd_millions=event.amount_usd_millions,
+            announced_date=announced,
+            lead_investor=event.lead_investor,
+            source_url=url,
+            source_title=title,
+            source_type="press",
+        ))
+    return rounds
+
+
+def _dedupe_rounds(
+    crunchbase_rounds: list[FundingRound],
+    press_rounds: list[FundingRound],
+) -> list[FundingRound]:
+    """Crunchbase wins on same series; press rounds with no CB match are kept.
+
+    Returns rounds in reverse chronological order (most recent first).
+    """
+    cb_series = {r.series for r in crunchbase_rounds}
+    unique_press = [r for r in press_rounds if r.series not in cb_series]
+    all_rounds = crunchbase_rounds + unique_press
+
+    def _sort_key(r: FundingRound) -> date:
+        return r.announced_date or date.min
+
+    return sorted(all_rounds, key=_sort_key, reverse=True)
