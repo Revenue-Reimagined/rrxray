@@ -7,6 +7,7 @@ from pathlib import Path
 from rrxray.collectors.positioning_drift import (
     NAME,
     _diff_snapshots,
+    _emit_findings,
     _extract_fields,
 )
 from rrxray.schemas.positioning_drift import HomepageSnapshot
@@ -123,3 +124,48 @@ def test_diff_snapshots_detects_sub_headline_change():
     new = HomepageSnapshot(timestamp=date(2026, 5, 1), archive_url="https://new", sub_headline="New sub")
     changed, _summary = _diff_snapshots(old, new)
     assert "sub_headline" in changed
+
+
+# --- _emit_findings ---
+
+def test_emit_findings_no_snapshots():
+    findings, gaps, questions = _emit_findings("acme.com", [], [], None)
+    assert len(findings) == 0
+    assert len(gaps) == 1
+    assert "Wayback" in gaps[0]
+    assert len(questions) == 0
+
+
+def test_emit_findings_one_snapshot():
+    snap = HomepageSnapshot(timestamp=date(2026, 5, 1), archive_url="https://web.archive.org/x")
+    findings, _gaps, _questions = _emit_findings("acme.com", [snap], [], None)
+    assert len(findings) == 1
+    assert "one" in findings[0].text.lower() or "1" in findings[0].text
+
+
+def test_emit_findings_stable_two_snapshots():
+    old = HomepageSnapshot(timestamp=date(2024, 11, 1), archive_url="https://web.archive.org/old", hero_headline="Same")
+    new = HomepageSnapshot(timestamp=date(2026, 5, 1), archive_url="https://web.archive.org/new", hero_headline="Same")
+    findings, _gaps, questions = _emit_findings("acme.com", [old, new], [], None)
+    assert len(findings) == 1
+    assert "stable" in findings[0].text.lower()
+    assert len(questions) == 0
+
+
+def test_emit_findings_hero_changed_produces_finding_and_question():
+    old = HomepageSnapshot(timestamp=date(2024, 11, 1), archive_url="https://web.archive.org/old", hero_headline="Old Hero Message")
+    new = HomepageSnapshot(timestamp=date(2026, 5, 1), archive_url="https://web.archive.org/new", hero_headline="New Hero Message")
+    findings, _gaps, questions = _emit_findings("acme.com", [old, new], ["hero_headline"], "hero shifted from 'Old Hero Message' to 'New Hero Message'")
+    assert len(findings) == 1
+    assert "shift" in findings[0].text.lower() or "drift" in findings[0].text.lower() or "changed" in findings[0].text.lower() or "detect" in findings[0].text.lower()
+    assert len(questions) == 1
+    assert "Old Hero Message" in questions[0] or "repositioning" in questions[0].lower()
+
+
+def test_emit_findings_nav_changed_no_question():
+    old = HomepageSnapshot(timestamp=date(2024, 11, 1), archive_url="https://web.archive.org/old", primary_nav=["Product", "Blog"])
+    new = HomepageSnapshot(timestamp=date(2026, 5, 1), archive_url="https://web.archive.org/new", primary_nav=["Product", "Blog", "Pricing"])
+    findings, _gaps, questions = _emit_findings("acme.com", [old, new], ["primary_nav"], "1 nav item added (Pricing)")
+    assert len(findings) == 1
+    # Nav change alone does not produce a discovery question
+    assert len(questions) == 0
