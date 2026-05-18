@@ -1,8 +1,11 @@
 """positioning_drift collector: Wayback homepage diffs detect messaging shift."""
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from rrxray.collectors._positioning_drift_catalog import (
     _H1_RE,
@@ -12,7 +15,10 @@ from rrxray.collectors._positioning_drift_catalog import (
     NAV_SKIP_PATTERNS,
 )
 from rrxray.schemas._shared import Finding, SourceCitation
-from rrxray.schemas.positioning_drift import HomepageSnapshot
+from rrxray.schemas.positioning_drift import HomepageSnapshot, PositioningDriftData
+
+if TYPE_CHECKING:
+    from rrxray.context import CollectorContext
 
 NAME = "positioning_drift"
 log = logging.getLogger(f"rrxray.collectors.{NAME}")
@@ -170,3 +176,107 @@ def _emit_findings(
         )
 
     return findings, gaps, questions
+
+
+def _write_evidence(
+    evidence_dir: Path,
+    snapshots: list[HomepageSnapshot],
+    changed_fields: list[str],
+    diff_summary: str | None,
+) -> None:
+    """Write snapshot summaries and diff JSON to evidence directory."""
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    # Remove stale snapshot files from prior runs
+    for stale in evidence_dir.glob("snapshot_*.md"):
+        stale.unlink()
+
+    for s in snapshots:
+        fname = f"snapshot_{s.timestamp.strftime('%Y%m%d')}.md"
+        lines = [f"# Snapshot: {s.timestamp}\n", f"**Archive URL:** {s.archive_url}\n"]
+        if s.hero_headline:
+            lines.append(f"**Hero:** {s.hero_headline}\n")
+        if s.sub_headline:
+            lines.append(f"**Sub-headline:** {s.sub_headline}\n")
+        if s.primary_nav:
+            lines.append(f"**Nav:** {', '.join(s.primary_nav)}\n")
+        (evidence_dir / fname).write_text("\n".join(lines), encoding="utf-8")
+
+    diff_data = {"changed_fields": changed_fields, "diff_summary": diff_summary}
+    (evidence_dir / "diff.json").write_text(
+        json.dumps(diff_data, indent=2), encoding="utf-8"
+    )
+
+
+async def collect(ctx: CollectorContext) -> PositioningDriftData:
+    """Collect homepage positioning drift via Wayback Machine snapshot diffs."""
+    from rrxray.services.wayback_client import WaybackError
+
+    now = datetime.now(UTC)
+    homepage_url = f"https://{ctx.domain}"
+
+    # Fetch snapshots
+    raw_snapshots = []
+    try:
+        raw_snapshots = await ctx.wayback.snapshots(
+            homepage_url, interval_months=6, span_months=18
+        )
+    except WaybackError as e:
+        log.warning("Wayback snapshots failed for %s: %s", ctx.domain, e)
+
+    # Build HomepageSnapshot objects by extracting fields from markdown
+    homepage_snapshots: list[HomepageSnapshot] = []
+    for s in raw_snapshots:
+        hero, sub, nav = _extract_fields(s.markdown or "")
+        homepage_snapshots.append(HomepageSnapshot(
+            timestamp=s.timestamp.date(),
+            archive_url=s.archive_url,
+            hero_headline=hero,
+            sub_headline=sub,
+            primary_nav=nav,
+        ))
+
+    # Sort ascending (oldest first) to ensure consistent oldest/newest assignment
+    homepage_snapshots.sort(key=lambda s: s.timestamp)
+
+    # Compute diff between oldest and newest
+    oldest: HomepageSnapshot | None = None
+    newest: HomepageSnapshot | None = None
+    changed_fields: list[str] = []
+    diff_summary: str | None = None
+
+    if len(homepage_snapshots) >= 2:
+        oldest = homepage_snapshots[0]
+        newest = homepage_snapshots[-1]
+        if oldest.timestamp != newest.timestamp:
+            changed_fields, diff_summary = _diff_snapshots(oldest, newest)
+
+    # Rule-based findings
+    findings, gaps, questions = _emit_findings(
+        ctx.domain, homepage_snapshots, changed_fields, diff_summary
+    )
+
+    # Write evidence
+    _write_evidence(
+        ctx.evidence_dir / NAME,
+        homepage_snapshots,
+        changed_fields,
+        diff_summary,
+    )
+
+    # Source citations
+    sources = [
+        SourceCitation(url=s.archive_url, timestamp=now)
+        for s in homepage_snapshots
+    ]
+
+    return PositioningDriftData(
+        snapshots=homepage_snapshots,
+        oldest_snapshot=oldest,
+        newest_snapshot=newest,
+        changed_fields=changed_fields,
+        diff_summary=diff_summary,
+        findings=findings,
+        gaps=gaps,
+        discovery_questions=questions,
+        sources=sources,
+    )

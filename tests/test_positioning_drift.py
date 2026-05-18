@@ -1,16 +1,23 @@
 """Tests for the positioning_drift collector."""
 from __future__ import annotations
 
-from datetime import date
+import asyncio
+import json
+from datetime import UTC, date, datetime
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from rrxray.collectors.positioning_drift import (
     NAME,
     _diff_snapshots,
     _emit_findings,
     _extract_fields,
+    _write_evidence,
+    collect,
 )
-from rrxray.schemas.positioning_drift import HomepageSnapshot
+from rrxray.schemas.positioning_drift import HomepageSnapshot, PositioningDriftData
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "synthetic" / "positioning_drift"
 
@@ -169,3 +176,81 @@ def test_emit_findings_nav_changed_no_question():
     assert len(findings) == 1
     # Nav change alone does not produce a discovery question
     assert len(questions) == 0
+
+
+# --- collect + _write_evidence ---
+
+@pytest.fixture
+def fake_wayback():
+    from rrxray.services.wayback_client import Snapshot
+
+    wc = MagicMock()
+    old_snap = Snapshot(
+        timestamp=datetime(2024, 11, 1, tzinfo=UTC),
+        archive_url="https://web.archive.org/web/20241101/https://acme.com",
+        html="<html><h1>Old Hero</h1></html>",
+        markdown="# Old Hero\n\nOld sub.\n\n[Product](/product) [Blog](/blog)\n",
+    )
+    new_snap = Snapshot(
+        timestamp=datetime(2026, 5, 1, tzinfo=UTC),
+        archive_url="https://web.archive.org/web/20260501/https://acme.com",
+        html="<html><h1>New Hero</h1></html>",
+        markdown="# New Hero\n\nNew sub.\n\n[Product](/product) [Pricing](/pricing) [Blog](/blog)\n",
+    )
+    wc.snapshots = AsyncMock(return_value=[old_snap, new_snap])
+    return wc
+
+
+@pytest.fixture
+def collector_ctx(tmp_path, fake_wayback):
+    ctx = MagicMock()
+    ctx.domain = "acme.com"
+    ctx.company_name = "Acme"
+    ctx.wayback = fake_wayback
+    ctx.evidence_dir = tmp_path / "evidence"
+    return ctx
+
+
+def test_collect_returns_positioning_drift_data(collector_ctx):
+    result = asyncio.run(collect(collector_ctx))
+    assert isinstance(result, PositioningDriftData)
+    assert len(result.snapshots) == 2
+    assert result.oldest_snapshot is not None
+    assert result.newest_snapshot is not None
+    assert result.oldest_snapshot.hero_headline == "Old Hero"
+    assert result.newest_snapshot.hero_headline == "New Hero"
+    assert "hero_headline" in result.changed_fields
+    assert len(result.findings) >= 1
+    assert result.gaps == []
+
+
+def test_collect_writes_evidence_files(collector_ctx):
+    asyncio.run(collect(collector_ctx))
+    evidence = collector_ctx.evidence_dir / "positioning_drift"
+    assert (evidence / "diff.json").exists()
+    snapshot_files = list(evidence.glob("snapshot_*.md"))
+    assert len(snapshot_files) == 2
+
+
+def test_collect_graceful_degradation_on_wayback_error(collector_ctx):
+    from rrxray.services.wayback_client import WaybackError
+    collector_ctx.wayback.snapshots = AsyncMock(side_effect=WaybackError("503"))
+    result = asyncio.run(collect(collector_ctx))
+    assert isinstance(result, PositioningDriftData)
+    assert result.snapshots == []
+    assert len(result.gaps) == 1
+    assert "Wayback" in result.gaps[0]
+
+
+def test_write_evidence_creates_files(tmp_path):
+    evidence_dir = tmp_path / "positioning_drift"
+    snaps = [
+        HomepageSnapshot(timestamp=date(2024, 11, 1), archive_url="https://x", hero_headline="Old"),
+        HomepageSnapshot(timestamp=date(2026, 5, 1), archive_url="https://y", hero_headline="New"),
+    ]
+    _write_evidence(evidence_dir, snaps, ["hero_headline"], "hero shifted from 'Old' to 'New'")
+    assert (evidence_dir / "diff.json").exists()
+    assert (evidence_dir / "snapshot_20241101.md").exists()
+    assert (evidence_dir / "snapshot_20260501.md").exists()
+    diff = json.loads((evidence_dir / "diff.json").read_text())
+    assert "hero_headline" in diff["changed_fields"]
