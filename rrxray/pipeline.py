@@ -12,6 +12,7 @@ from rrxray.collectors import (
     content_demand,
     funding_trajectory,
     leadership_stability,
+    positioning_drift,
     pricing_packaging,
     revenue_motion,
     tech_stack,
@@ -49,6 +50,7 @@ COLLECTORS = [
     content_demand,
     leadership_stability,
     funding_trajectory,
+    positioning_drift,
 ]
 SYNTHESIZERS = [
     observed_gtm_motion,

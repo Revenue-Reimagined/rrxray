@@ -151,3 +151,9 @@ def test_funding_trajectory_after_leadership_stability():
     lt_idx = names.index("leadership_stability")
     ft_idx = names.index("funding_trajectory")
     assert ft_idx > lt_idx
+
+
+def test_collectors_includes_positioning_drift():
+    from rrxray import pipeline
+    names = [c.NAME for c in pipeline.COLLECTORS]
+    assert "positioning_drift" in names
