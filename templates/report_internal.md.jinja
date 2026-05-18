@@ -114,6 +114,12 @@
 {% include "_funding_trajectory_detail.md.jinja" %}
 {% endif %}
 
+{% if data.collectors.positioning_drift %}
+### Positioning Drift
+
+{% include "_positioning_drift_detail.md.jinja" %}
+{% endif %}
+
 ---
 
 ## 6. Discovery Questions
