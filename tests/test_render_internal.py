@@ -731,7 +731,11 @@ def test_render_includes_positioning_drift_detail():
 
     from rrxray.rendering.markdown import render_internal
     from rrxray.schemas.data import (
-        CollectorOutputs, InputParams, RunMetadata, SynthesizerOutputs, XrayData,
+        CollectorOutputs,
+        InputParams,
+        RunMetadata,
+        SynthesizerOutputs,
+        XrayData,
     )
     from rrxray.schemas.positioning_drift import HomepageSnapshot, PositioningDriftData
     from rrxray.voice.anonymizer import Anonymizer

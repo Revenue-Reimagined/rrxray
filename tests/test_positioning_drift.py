@@ -188,14 +188,14 @@ def fake_wayback():
     old_snap = Snapshot(
         timestamp=datetime(2024, 11, 1, tzinfo=UTC),
         archive_url="https://web.archive.org/web/20241101/https://acme.com",
-        html="<html><h1>Old Hero</h1></html>",
-        markdown="# Old Hero\n\nOld sub.\n\n[Product](/product) [Blog](/blog)\n",
+        html="<html><h1>Old Hero Headline</h1></html>",
+        markdown="# Old Hero Headline\n\nOld sub.\n\n[Product](/product) [Blog](/blog)\n",
     )
     new_snap = Snapshot(
         timestamp=datetime(2026, 5, 1, tzinfo=UTC),
         archive_url="https://web.archive.org/web/20260501/https://acme.com",
-        html="<html><h1>New Hero</h1></html>",
-        markdown="# New Hero\n\nNew sub.\n\n[Product](/product) [Pricing](/pricing) [Blog](/blog)\n",
+        html="<html><h1>New Hero Headline</h1></html>",
+        markdown="# New Hero Headline\n\nNew sub.\n\n[Product](/product) [Pricing](/pricing) [Blog](/blog)\n",
     )
     wc.snapshots = AsyncMock(return_value=[old_snap, new_snap])
     return wc
@@ -217,8 +217,8 @@ def test_collect_returns_positioning_drift_data(collector_ctx):
     assert len(result.snapshots) == 2
     assert result.oldest_snapshot is not None
     assert result.newest_snapshot is not None
-    assert result.oldest_snapshot.hero_headline == "Old Hero"
-    assert result.newest_snapshot.hero_headline == "New Hero"
+    assert result.oldest_snapshot.hero_headline == "Old Hero Headline"
+    assert result.newest_snapshot.hero_headline == "New Hero Headline"
     assert "hero_headline" in result.changed_fields
     assert len(result.findings) >= 1
     assert result.gaps == []

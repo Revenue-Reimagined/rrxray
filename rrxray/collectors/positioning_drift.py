@@ -12,6 +12,7 @@ from rrxray.collectors._positioning_drift_catalog import (
     _MD_LINK_RE,
     MAX_HEADLINE_LEN,
     MAX_NAV_ITEMS,
+    MIN_HEADLINE_LEN,
     NAV_SKIP_PATTERNS,
 )
 from rrxray.schemas._shared import Finding, SourceCitation
@@ -38,6 +39,8 @@ def _extract_fields(markdown: str) -> tuple[str | None, str | None, list[str]]:
     hero: str | None = None
     if h1_match:
         hero = h1_match.group(1).strip()[:MAX_HEADLINE_LEN]
+        if len(hero) < MIN_HEADLINE_LEN:
+            hero = None  # too short to be a meaningful headline
 
     # Sub-headline: first non-empty, non-heading, non-link-only line after H1
     sub: str | None = None
