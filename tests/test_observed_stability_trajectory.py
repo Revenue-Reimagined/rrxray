@@ -418,6 +418,7 @@ def test_build_aggregates_with_funding_populates_fields():
 
 def test_prompt_renders_funding_block_when_present():
     from datetime import date
+
     from rrxray.synthesizers.observed_stability_trajectory import _render_user_message
     ft = FundingTrajectoryData(
         rounds=[
