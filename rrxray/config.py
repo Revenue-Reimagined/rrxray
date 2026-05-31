@@ -1,4 +1,5 @@
 """Config: env + CLI flag merging via pydantic-settings."""
+
 from __future__ import annotations
 
 from datetime import date
@@ -27,6 +28,7 @@ class Config(BaseSettings):
         env_file=".env",
         extra="ignore",
         case_sensitive=False,
+        populate_by_name=True,
     )
 
     @classmethod
@@ -51,6 +53,18 @@ class Config(BaseSettings):
     gamma_api_key: SecretStr | None = Field(default=None, alias="GAMMA_API_KEY")
     gemini_api_key: SecretStr | None = Field(default=None, alias="GEMINI_API_KEY")
     pdl_api_key: SecretStr | None = Field(default=None, alias="PDL_API_KEY")
+
+    # Ingestion integration configuration (gtmfoundations)
+    gtm_ingest_enabled: bool = Field(default=False, alias="GTM_INGEST_ENABLED")
+    gtm_ingest_url: str | None = Field(default=None, alias="GTM_INGEST_URL")
+    gtm_ingest_token: SecretStr | None = Field(default=None, alias="GTM_INGEST_TOKEN")
+    gtm_ingest_headers: dict[str, str] = Field(default_factory=dict, alias="GTM_INGEST_HEADERS")
+    gtm_ingest_strict: bool = Field(default=False, alias="GTM_INGEST_STRICT")
+
+    # Submitter metadata for ingestion
+    gtm_submitter_first_name: str = Field(default="Dale", alias="GTM_SUBMITTER_FIRST_NAME")
+    gtm_submitter_last_name: str = Field(default="Zwizinski", alias="GTM_SUBMITTER_LAST_NAME")
+    gtm_submitter_email: str = Field(default="dale@revenue-reimagined.com", alias="GTM_SUBMITTER_EMAIL")
 
     # Required runtime
     domain: str
@@ -79,9 +93,7 @@ class Config(BaseSettings):
     @classmethod
     def _mode_valid(cls, v: str) -> str:
         if v != "internal":
-            raise ValueError(
-                f"Mode {v!r} not available in Phase 1; only 'internal' is implemented."
-            )
+            raise ValueError(f"Mode {v!r} not available in Phase 1; only 'internal' is implemented.")
         return v
 
     def resolved_output_dir(self) -> Path:
