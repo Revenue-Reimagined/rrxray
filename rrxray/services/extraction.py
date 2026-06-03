@@ -56,6 +56,14 @@ class ExtractedExecChange(BaseModel):
     occurred_at: str | None = None  # ISO date YYYY-MM-DD if extractable, else None
 
 
+class ExtractedFundingEvent(BaseModel):
+    series: str  # FundingSeries literal; validated in collector after extraction
+    amount_usd_millions: float | None = None
+    announced_date: str | None = None  # ISO date YYYY-MM-DD if extractable, else None
+    lead_investor: str | None = None
+    is_relevant: bool
+
+
 _EXEC_CHANGE_SYSTEM_PROMPT = """You extract structured exec-change records from press release titles and snippets.
 
 The user message will begin with "Target company: <name>" and "Target domain: <domain>". The target company is identified by both name and domain. The DOMAIN is the authoritative identifier. Many companies share generic words in their names (e.g., "Linear" could be Linear the project management tool at linear.app, OR Linear Retail, OR Linear Health Sciences, OR Linear Clinical Research, OR Linear Air — these are all different companies). If the press release is about a different organization that shares part of the target's name, set is_relevant=False.
@@ -85,6 +93,29 @@ If the role doesn't map to one of these, pick the closest match and let role_raw
 Action must be one of: hire, departure, promotion. Promotion = internal move (e.g., "promotes X to CRO"). Hire = external (e.g., "names", "appoints", "joins"). Departure = leaving (e.g., "departs", "resigns", "steps down").
 
 If the body or snippet contains a clear date for when the change took effect (e.g., "effective March 1, 2026", "today announced", "January 15, 2024"), populate `occurred_at` as YYYY-MM-DD. If the date is ambiguous or not stated, set `occurred_at` to None. Do NOT guess or fabricate dates.
+"""
+
+
+_FUNDING_EVENT_SYSTEM_PROMPT = """You extract structured funding-round records from press release titles and snippets.
+
+The user message will begin with "Target company: <name>" and "Target domain: <domain>". The target company is identified by both name and domain. Many companies share common words — use the domain as the authoritative identifier. If the announcement is about a different organization that shares part of the target name, set is_relevant=False.
+
+Given a title and snippet, identify whether it announces a funding round AT the target company. If yes, extract the round series, USD amount, announcement date, and lead investor.
+
+Set is_relevant=True ONLY when ALL of the following are met:
+1. The announcement is unambiguously about the company at the target domain.
+2. The round series is clearly stated or strongly implied.
+3. The event is a funding raise (not an acquisition by the company, product launch, partnership, etc.).
+
+When in doubt, set is_relevant=False. False positives produce confidently-wrong synthesizer narratives.
+
+Map the series to one of: pre_seed, seed, series_a, series_b, series_c, series_d, series_e_plus, growth, private_equity, ipo, acquisition, debt, grant, unknown.
+
+For amount: extract the USD amount in millions (e.g., "$25M" -> 25.0, "$8.5 million" -> 8.5, "$1B" -> 1000.0). If undisclosed, set to None.
+
+For announced_date: if the title or snippet contains a clear date, populate as YYYY-MM-DD. If ambiguous or not stated, set to None. Do NOT guess or fabricate dates.
+
+For lead_investor: extract the lead investor firm name. If not mentioned or unclear, set to None.
 """
 
 
@@ -119,6 +150,33 @@ class HaikuExtractor:
         result = response.parsed
         return result if result.is_relevant else None
 
+    async def extract_funding_event(
+        self, title: str, snippet: str, target_company: str, target_domain: str,
+        body: str | None = None,
+    ) -> ExtractedFundingEvent | None:
+        from rrxray.services.anthropic_client import AnthropicError
+        parts = [
+            f"Target company: {target_company}",
+            f"Target domain: {target_domain}",
+            f"Title: {title}",
+            f"Snippet: {snippet}",
+        ]
+        if body:
+            parts.append(f"Full body:\n{body}")
+        user_message = "\n\n".join(parts)
+        try:
+            response = await self.anthropic.complete_with_cached_system(
+                system_prompt=_FUNDING_EVENT_SYSTEM_PROMPT,
+                user_message=user_message,
+                model="claude-haiku-4-5-20251001",
+                response_schema=ExtractedFundingEvent,
+            )
+        except (AnthropicError, ValidationError) as e:
+            log.debug("Haiku extract_funding_event failed: %s", e)
+            return None
+        result = response.parsed
+        return result if result.is_relevant else None
+
 
 
 class GeminiFlashExtractor:
@@ -148,6 +206,33 @@ class GeminiFlashExtractor:
             )
         except (GeminiError, ValidationError) as e:
             log.debug("Gemini extract_exec_change failed: %s", e)
+            return None
+        result = response.parsed
+        return result if result.is_relevant else None
+
+    async def extract_funding_event(
+        self, title: str, snippet: str, target_company: str, target_domain: str,
+        body: str | None = None,
+    ) -> ExtractedFundingEvent | None:
+        from rrxray.services.gemini_client import GeminiError
+        parts = [
+            f"Target company: {target_company}",
+            f"Target domain: {target_domain}",
+            f"Title: {title}",
+            f"Snippet: {snippet}",
+        ]
+        if body:
+            parts.append(f"Full body:\n{body}")
+        user_message = "\n\n".join(parts)
+        try:
+            response = await self.gemini.complete_structured(
+                system_prompt=_FUNDING_EVENT_SYSTEM_PROMPT,
+                user_message=user_message,
+                response_schema=ExtractedFundingEvent,
+                model="gemini-2.0-flash",
+            )
+        except (GeminiError, ValidationError) as e:
+            log.debug("Gemini extract_funding_event failed: %s", e)
             return None
         result = response.parsed
         return result if result.is_relevant else None

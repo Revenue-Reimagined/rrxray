@@ -69,6 +69,14 @@ This workflow has caught real bugs across Phase 1 (substring matching corruption
 
 ---
 
+## `/goal` usage
+
+`/goal` is used per **sub-phase execution**, not per full phase. **Auto-mode must be on.** Conditions are **evidence-anchored** (`pytest`, `ruff`, voice check, checkpoint commit) with an explicit **25-turn cap**.
+
+Full convention, condition template, and worked examples: `docs/workflow/goal-usage.md`. Do not run `/goal` for paid-API-in-loop phases (e.g. PDL enrichment) — manual dispatch only.
+
+---
+
 ## MANDATORY: Model selection per task — Balance Quality, Cost, Speed
 
 This is non-negotiable. Dale's explicit ask: "best model for the best action for the best price." Apply on every subagent dispatch and every model decision. Default-to-Sonnet wastes budget on mechanical work; default-to-Haiku produces shallow design. Pick deliberately.

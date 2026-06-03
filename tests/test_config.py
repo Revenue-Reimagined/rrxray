@@ -121,3 +121,40 @@ def test_no_pdl_overridable():
     from rrxray.config import Config
     c = Config(domain="example.com", no_pdl=True)
     assert c.no_pdl is True
+
+
+def test_gtm_ingest_defaults():
+    from rrxray.config import Config
+    c = Config(domain="example.com")
+    assert c.gtm_ingest_enabled is False
+    assert c.gtm_ingest_url is None
+    assert c.gtm_ingest_token is None
+    assert c.gtm_ingest_headers == {}
+    assert c.gtm_ingest_strict is False
+    assert c.gtm_submitter_first_name == "Dale"
+    assert c.gtm_submitter_last_name == "Zwizinski"
+    assert c.gtm_submitter_email == "dale@revenue-reimagined.com"
+
+
+def test_gtm_ingest_overrides(monkeypatch):
+    monkeypatch.setenv("GTM_INGEST_ENABLED", "True")
+    monkeypatch.setenv("GTM_INGEST_URL", "https://gtmfoundations.com/api/v1/xray/ingest")
+    monkeypatch.setenv("GTM_INGEST_TOKEN", "some-token")
+    monkeypatch.setenv("GTM_INGEST_HEADERS", '{"X-Header": "value"}')
+    monkeypatch.setenv("GTM_INGEST_STRICT", "True")
+    monkeypatch.setenv("GTM_SUBMITTER_FIRST_NAME", "Jane")
+    monkeypatch.setenv("GTM_SUBMITTER_LAST_NAME", "Doe")
+    monkeypatch.setenv("GTM_SUBMITTER_EMAIL", "jane@doe.com")
+
+    from rrxray.config import Config
+    c = Config(domain="example.com")
+    assert c.gtm_ingest_enabled is True
+    assert c.gtm_ingest_url == "https://gtmfoundations.com/api/v1/xray/ingest"
+    assert c.gtm_ingest_token is not None
+    assert c.gtm_ingest_token.get_secret_value() == "some-token"
+    assert c.gtm_ingest_headers == {"X-Header": "value"}
+    assert c.gtm_ingest_strict is True
+    assert c.gtm_submitter_first_name == "Jane"
+    assert c.gtm_submitter_last_name == "Doe"
+    assert c.gtm_submitter_email == "jane@doe.com"
+

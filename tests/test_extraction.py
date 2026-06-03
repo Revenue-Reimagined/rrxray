@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from rrxray.services.extraction import (
     ExecAction,
     ExtractedExecChange,
+    ExtractedFundingEvent,  # new
     GeminiFlashExtractor,
     HaikuExtractor,
     make_extractor,
@@ -241,3 +242,119 @@ def test_make_extractor_raises_when_gemini_key_missing(fake_anthropic):
     config = Config(domain="example.com", extractor_model="gemini-flash")
     with pytest.raises(ExtractorConfigError):
         make_extractor(config, fake_anthropic, gemini=None)
+
+
+class _FakeFundingResponse(BaseModel):
+    parsed: ExtractedFundingEvent
+    model_used: str = "claude-haiku-4-5-20251001"
+    cache_hit: bool = False
+
+
+def test_haiku_extractor_returns_funding_round(fake_anthropic):
+    fake_anthropic.complete_with_cached_system.return_value = _FakeFundingResponse(
+        parsed=ExtractedFundingEvent(
+            series="series_b",
+            amount_usd_millions=25.0,
+            announced_date="2024-03-15",
+            lead_investor="Sequoia Capital",
+            is_relevant=True,
+        ),
+    )
+    extractor = HaikuExtractor(fake_anthropic)
+    result = asyncio.run(
+        extractor.extract_funding_event(
+            title="Acme raises $25M Series B",
+            snippet="Acme, a B2B SaaS company, raised $25M led by Sequoia.",
+            target_company="Acme",
+            target_domain="acme.com",
+        )
+    )
+    assert result is not None
+    assert result.series == "series_b"
+    assert result.amount_usd_millions == 25.0
+    assert result.lead_investor == "Sequoia Capital"
+
+
+def test_haiku_extractor_returns_none_when_irrelevant(fake_anthropic):
+    fake_anthropic.complete_with_cached_system.return_value = _FakeFundingResponse(
+        parsed=ExtractedFundingEvent(
+            series="unknown",
+            is_relevant=False,
+        ),
+    )
+    extractor = HaikuExtractor(fake_anthropic)
+    result = asyncio.run(
+        extractor.extract_funding_event(
+            title="Competitor raises $10M",
+            snippet="Competitor Corp raised capital.",
+            target_company="Acme",
+            target_domain="acme.com",
+        )
+    )
+    assert result is None
+
+
+def test_haiku_extractor_funding_returns_none_on_api_error(fake_anthropic):
+    from rrxray.services.anthropic_client import AnthropicError
+    fake_anthropic.complete_with_cached_system.side_effect = AnthropicError("timeout")
+    extractor = HaikuExtractor(fake_anthropic)
+    result = asyncio.run(
+        extractor.extract_funding_event(
+            title="Acme raises $25M",
+            snippet="Acme raised $25M.",
+            target_company="Acme",
+            target_domain="acme.com",
+        )
+    )
+    assert result is None
+
+
+def test_gemini_extractor_returns_funding_round(fake_gemini):
+    class _FakeGeminiFundingResponse(BaseModel):
+        parsed: ExtractedFundingEvent
+        model_used: str = "gemini-2.0-flash"
+        cache_hit: bool = False
+
+    fake_gemini.complete_structured.return_value = _FakeGeminiFundingResponse(
+        parsed=ExtractedFundingEvent(
+            series="series_a",
+            amount_usd_millions=8.0,
+            is_relevant=True,
+        ),
+    )
+    extractor = GeminiFlashExtractor(fake_gemini)
+    result = asyncio.run(
+        extractor.extract_funding_event(
+            title="Acme closes $8M Series A",
+            snippet="Acme announced $8M funding.",
+            target_company="Acme",
+            target_domain="acme.com",
+        )
+    )
+    assert result is not None
+    assert result.series == "series_a"
+
+
+def test_extract_funding_event_with_body(fake_anthropic):
+    fake_anthropic.complete_with_cached_system.return_value = _FakeFundingResponse(
+        parsed=ExtractedFundingEvent(
+            series="series_c",
+            amount_usd_millions=50.0,
+            is_relevant=True,
+        ),
+    )
+    extractor = HaikuExtractor(fake_anthropic)
+    result = asyncio.run(
+        extractor.extract_funding_event(
+            title="Acme raises $50M Series C",
+            snippet="Acme raised Series C.",
+            target_company="Acme",
+            target_domain="acme.com",
+            body="Full article body text here.",
+        )
+    )
+    assert result is not None
+    # Verify body was included in the call
+    call_args = fake_anthropic.complete_with_cached_system.call_args
+    assert "Full article body text" in call_args.kwargs.get("user_message", "") or \
+           "Full article body text" in str(call_args)

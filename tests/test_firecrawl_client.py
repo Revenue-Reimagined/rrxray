@@ -164,3 +164,141 @@ def test_search_merges_web_and_news_buckets(client, fake_sdk):
     assert len(results) == 2
     titles = {r.title for r in results}
     assert titles == {"Web1", "News1"}
+
+
+def test_submit_batch_returns_job_id(client, fake_sdk):
+    fake_job_response = MagicMock()
+    fake_job_response.id = "batch-job-123"
+    fake_sdk.start_batch_scrape.return_value = fake_job_response
+
+    job_id = asyncio.run(client.submit_batch(["https://example.com/1", "https://example.com/2"]))
+    assert job_id == "batch-job-123"
+    fake_sdk.start_batch_scrape.assert_called_once_with(
+        ["https://example.com/1", "https://example.com/2"],
+        formats=["markdown", "html"],
+        only_main_content=True,
+    )
+
+
+def test_get_batch_status_returns_payload(client, fake_sdk):
+    fake_status = MagicMock()
+    fake_status.status = "completed"
+    fake_status.completed = 2
+    fake_status.total = 2
+    fake_status.data = [
+        {"markdown": "# 1", "html": "<p>1</p>", "metadata": {"sourceURL": "https://example.com/1"}},
+        {"markdown": "# 2", "html": "<p>2</p>", "metadata": {"sourceURL": "https://example.com/2"}},
+    ]
+    fake_sdk.get_batch_scrape_status.return_value = fake_status
+
+    status_payload = asyncio.run(client.get_batch_status("batch-job-123"))
+    assert status_payload["status"] == "completed"
+    assert status_payload["completed"] == 2
+    assert len(status_payload["data"]) == 2
+    fake_sdk.get_batch_scrape_status.assert_called_once_with("batch-job-123")
+
+
+def test_wait_for_batch_polls_until_completed(client, fake_sdk):
+    fake_status_1 = MagicMock()
+    fake_status_1.status = "scraping"
+    fake_status_1.completed = 0
+    fake_status_1.total = 2
+    fake_status_1.data = []
+
+    fake_status_2 = MagicMock()
+    fake_status_2.status = "completed"
+    fake_status_2.completed = 2
+    fake_status_2.total = 2
+    fake_status_2.data = [
+        {"markdown": "# 1", "html": "<p>1</p>", "metadata": {"sourceURL": "https://example.com/1"}},
+        {"markdown": "# 2", "html": "<p>2</p>", "metadata": {"sourceURL": "https://example.com/2"}},
+    ]
+
+    fake_sdk.get_batch_scrape_status.side_effect = [fake_status_1, fake_status_2]
+
+    pages = asyncio.run(client.wait_for_batch("batch-job-123", poll_interval=1))
+    assert len(pages) == 2
+    assert pages[0].url == "https://example.com/1"
+    assert pages[0].markdown == "# 1"
+    assert pages[1].url == "https://example.com/2"
+    assert pages[1].markdown == "# 2"
+    assert fake_sdk.get_batch_scrape_status.call_count == 2
+
+
+def test_wait_for_batch_handles_failure(client, fake_sdk):
+    fake_status = MagicMock()
+    fake_status.status = "failed"
+    fake_sdk.get_batch_scrape_status.return_value = fake_status
+
+    from rrxray.services.firecrawl_client import FirecrawlError
+    with pytest.raises(FirecrawlError, match="failed on the server"):
+        asyncio.run(client.wait_for_batch("batch-job-123", poll_interval=1))
+
+
+def test_wait_for_batch_handles_cancelled(client, fake_sdk):
+    fake_status = MagicMock()
+    fake_status.status = "cancelled"
+    fake_sdk.get_batch_scrape_status.return_value = fake_status
+
+    from rrxray.services.firecrawl_client import FirecrawlError
+    with pytest.raises(FirecrawlError, match="was cancelled"):
+        asyncio.run(client.wait_for_batch("batch-job-123", poll_interval=1))
+
+
+def test_wait_for_batch_exponential_backoff_on_errors(client, fake_sdk):
+    fake_sdk.get_batch_scrape_status.side_effect = [
+        RuntimeError("Transient API / Connection Error"),
+        MagicMock(status="completed", completed=1, total=1, data=[
+            {"markdown": "# 1", "html": "1", "metadata": {"sourceURL": "https://example.com/1"}}
+        ]),
+    ]
+
+    pages = asyncio.run(client.wait_for_batch("batch-job-123", poll_interval=1))
+    assert len(pages) == 1
+    assert pages[0].url == "https://example.com/1"
+    assert fake_sdk.get_batch_scrape_status.call_count == 2
+
+
+def test_scrape_batch_uses_cache_for_scraped_urls(client, fake_sdk):
+    args_cached = {"url": "https://example.com/cached", "only_main_content": True}
+    key_cached = client.cache._key("firecrawl.scrape", args_cached)
+    client.cache._write(key_cached, {
+        "markdown": "# Cached Markdown",
+        "html": "<p>Cached HTML</p>",
+        "metadata": {"sourceURL": "https://example.com/cached"},
+    })
+
+    fake_job_response = MagicMock()
+    fake_job_response.id = "batch-job-456"
+    fake_sdk.start_batch_scrape.return_value = fake_job_response
+
+    fake_status = MagicMock()
+    fake_status.status = "completed"
+    fake_status.completed = 1
+    fake_status.total = 1
+    fake_status.data = [
+        {"markdown": "# Uncached Markdown", "html": "<p>Uncached HTML</p>", "metadata": {"sourceURL": "https://example.com/uncached"}},
+    ]
+    fake_sdk.get_batch_scrape_status.return_value = fake_status
+
+    urls = ["https://example.com/cached", "https://example.com/uncached"]
+    pages = asyncio.run(client.scrape_batch(urls, poll_interval=1))
+
+    assert len(pages) == 2
+    assert pages[0].url == "https://example.com/cached"
+    assert pages[0].markdown == "# Cached Markdown"
+    assert pages[1].url == "https://example.com/uncached"
+    assert pages[1].markdown == "# Uncached Markdown"
+
+    fake_sdk.start_batch_scrape.assert_called_once_with(
+        ["https://example.com/uncached"],
+        formats=["markdown", "html"],
+        only_main_content=True,
+    )
+
+    args_uncached = {"url": "https://example.com/uncached", "only_main_content": True}
+    key_uncached = client.cache._key("firecrawl.scrape", args_uncached)
+    cached_uncached = client.cache._read(key_uncached)
+    assert cached_uncached is not None
+    assert cached_uncached["markdown"] == "# Uncached Markdown"
+

@@ -1,0 +1,41 @@
+{# templates/_positioning_drift_detail.md.jinja #}
+{% set pd = data.collectors.positioning_drift %}
+**Snapshots recovered:** {{ pd.snapshots | length }}
+{% if pd.snapshots %}
+**Date range:** {{ pd.snapshots[0].timestamp }} to {{ pd.snapshots[-1].timestamp }}
+{% endif %}
+**Changed fields:** {% if pd.changed_fields %}{{ pd.changed_fields | join(", ") }}{% else %}none{% endif %}
+
+{% if pd.diff_summary %}
+**Drift summary:** {{ pd.diff_summary }}
+
+{% endif %}
+{% if pd.snapshots %}
+| Date | Hero Headline | Nav Items |
+|---|---|---|
+{% for s in pd.snapshots %}
+| {{ s.timestamp }} | {{ s.hero_headline or "(not recovered)" }} | {{ s.primary_nav | join(", ") or "(none)" }} |
+{% endfor %}
+
+{% endif %}
+{% if pd.findings %}
+**Findings:**
+
+{% for f in pd.findings %}
+- {{ f.text | voice_collector }} *(source: [{{ f.source.url }}]({{ f.source.url }}))*
+{% endfor %}
+{% endif %}
+{% if pd.gaps %}
+**Gaps:**
+
+{% for g in pd.gaps %}
+→ {{ g | voice_collector }}
+{% endfor %}
+{% endif %}
+{% if pd.discovery_questions %}
+**Discovery questions:**
+
+{% for q in pd.discovery_questions %}
+- {{ q | voice_collector }}
+{% endfor %}
+{% endif %}

@@ -209,3 +209,32 @@ def test_collector_outputs_four_section_a_collectors_round_trip():
     restored = CollectorOutputs.model_validate(json.loads(serialized))
     assert restored.content_demand is not None
     assert restored.content_demand.blog_posts[0].title == "The Future of X"
+
+
+def test_collector_outputs_funding_trajectory_field():
+    from rrxray.schemas.data import CollectorOutputs
+    from rrxray.schemas.funding_trajectory import FundingTrajectoryData
+    out = CollectorOutputs()
+    assert out.funding_trajectory is None
+    data = FundingTrajectoryData(implied_stage="early_growth")
+    out.funding_trajectory = data
+    assert out.funding_trajectory.implied_stage == "early_growth"
+
+
+def test_xraydata_round_trips_funding_trajectory():
+    from rrxray.schemas.data import CollectorOutputs
+    from rrxray.schemas.funding_trajectory import FundingRound, FundingTrajectoryData
+    r = FundingRound(series="series_b", amount_usd_millions=25.0, source_url="https://x", source_type="crunchbase")
+    ft = FundingTrajectoryData(rounds=[r], implied_stage="early_growth")
+    out = CollectorOutputs(funding_trajectory=ft)
+    dumped = out.model_dump_json()
+    restored = CollectorOutputs.model_validate_json(dumped)
+    assert restored.funding_trajectory.implied_stage == "early_growth"
+    assert len(restored.funding_trajectory.rounds) == 1
+
+
+def test_collector_outputs_has_positioning_drift_field():
+    from rrxray.schemas.data import CollectorOutputs
+    outputs = CollectorOutputs()
+    assert hasattr(outputs, "positioning_drift")
+    assert outputs.positioning_drift is None

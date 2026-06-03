@@ -6,6 +6,7 @@ from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock
 
 from rrxray.schemas._shared import Finding, SourceCitation
+from rrxray.schemas.funding_trajectory import FundingRound, FundingTrajectoryData
 from rrxray.schemas.leadership_stability import (
     CurrentIncumbent,
     ExecAction,
@@ -365,3 +366,87 @@ def test_synth_renders_enrichment_metadata_when_partial():
     call_args = fake_anthropic.complete_with_cached_system.await_args
     user_message = call_args.kwargs.get("user_message", "")
     assert "cost_cap" in user_message or "partial" in user_message.lower()
+
+
+# --- Phase 2.4a: StabilityAggregates funding fields ---
+
+def test_stability_aggregates_funding_fields_default():
+    """StabilityAggregates has funding fields with safe defaults."""
+    aggs = _build_aggregates(_full_data(), funding=None)
+    assert aggs.funding_recovered is False
+    assert aggs.last_round_series is None
+    assert aggs.last_round_months_ago is None
+    assert aggs.last_round_amount_usd_millions is None
+    assert aggs.total_raised_usd_millions is None
+    assert aggs.implied_stage == "signal_not_recovered"
+    assert aggs.recent_rounds == []
+
+
+def test_build_aggregates_with_funding_populates_fields():
+    from datetime import date
+    ft = FundingTrajectoryData(
+        rounds=[
+            FundingRound(
+                series="series_b", amount_usd_millions=25.0,
+                announced_date=date(2024, 3, 15),
+                lead_investor="Sequoia",
+                source_url="https://crunchbase.com/x",
+                source_type="crunchbase",
+            ),
+            FundingRound(
+                series="series_a", amount_usd_millions=8.0,
+                announced_date=date(2022, 6, 1),
+                source_url="https://crunchbase.com/y",
+                source_type="crunchbase",
+            ),
+        ],
+        total_raised_usd_millions=33.0,
+        last_round_months_ago=14,
+        implied_stage="early_growth",
+        crunchbase_recovered=True,
+    )
+    aggs = _build_aggregates(_full_data(), funding=ft)
+    assert aggs.funding_recovered is True
+    assert aggs.last_round_series == "series_b"
+    assert aggs.last_round_months_ago == 14
+    assert aggs.last_round_amount_usd_millions == 25.0
+    assert aggs.total_raised_usd_millions == 33.0
+    assert aggs.implied_stage == "early_growth"
+    assert len(aggs.recent_rounds) == 2
+    assert aggs.recent_rounds[0]["series"] == "series_b"
+
+
+def test_prompt_renders_funding_block_when_present():
+    from datetime import date
+
+    from rrxray.synthesizers.observed_stability_trajectory import _render_user_message
+    ft = FundingTrajectoryData(
+        rounds=[
+            FundingRound(series="series_b", amount_usd_millions=25.0, announced_date=date(2024, 3, 15),
+                         source_url="https://x", source_type="crunchbase"),
+        ],
+        last_round_months_ago=14, implied_stage="early_growth", crunchbase_recovered=True,
+        total_raised_usd_millions=25.0,
+    )
+    aggs = _build_aggregates(_full_data(), funding=ft)
+    msg = _render_user_message("acme.com", aggs)
+    assert "Funding trajectory signal" in msg
+    assert "series_b" in msg
+    assert "14" in msg
+
+
+def test_prompt_renders_not_recovered_when_funding_absent():
+    from rrxray.synthesizers.observed_stability_trajectory import _render_user_message
+    aggs = _build_aggregates(_full_data(), funding=None)
+    msg = _render_user_message("acme.com", aggs)
+    assert "Funding trajectory signal" in msg
+    assert "not recovered" in msg.lower()
+
+
+def test_build_aggregates_funding_recovered_false_when_no_rounds():
+    ft = FundingTrajectoryData(
+        rounds=[], implied_stage="signal_not_recovered", crunchbase_recovered=False
+    )
+    aggs = _build_aggregates(_full_data(), funding=ft)
+    assert aggs.funding_recovered is False
+    assert aggs.implied_stage == "signal_not_recovered"

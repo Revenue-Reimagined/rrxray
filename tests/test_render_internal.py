@@ -683,3 +683,89 @@ def test_content_demand_module_detail_omits_when_no_collector():
     data = make_data()
     out = render_internal(data, Anonymizer(), VoicePostProcessor())
     assert "### Content Demand" not in out
+
+
+def test_render_internal_includes_funding_trajectory_detail():
+    from datetime import UTC, date, datetime
+
+    from rrxray.schemas._shared import SourceCitation
+    from rrxray.schemas.funding_trajectory import FundingRound, FundingTrajectoryData
+    ft = FundingTrajectoryData(
+        rounds=[
+            FundingRound(series="series_b", amount_usd_millions=25.0, announced_date=date(2024, 3, 15),
+                         source_url="https://crunchbase.com/organization/acme", source_type="crunchbase"),
+        ],
+        total_raised_usd_millions=25.0,
+        last_round_months_ago=14,
+        implied_stage="early_growth",
+        crunchbase_url="https://crunchbase.com/organization/acme",
+        crunchbase_recovered=True,
+        sources=[SourceCitation(url="https://crunchbase.com/organization/acme", timestamp=datetime(2026, 5, 15, tzinfo=UTC))],
+    )
+    # Build XrayData with funding_trajectory set
+    from rrxray.schemas.data import CollectorOutputs, InputParams, RunMetadata, SynthesizerOutputs, XrayData
+    data = XrayData(
+        domain="acme.com",
+        company_name="Acme Inc.",
+        run_metadata=RunMetadata(
+            timestamp=datetime(2026, 5, 15, 12, 0, tzinfo=UTC),
+            tool_version="0.1.0",
+            modes_built=["internal"],
+            model_used="claude-sonnet-4-6",
+        ),
+        inputs=InputParams(domain="acme.com", mode="internal", model="claude-sonnet-4-6"),
+        collectors=CollectorOutputs(funding_trajectory=ft),
+        synthesizers=SynthesizerOutputs(),
+    )
+    from rrxray.rendering.markdown import render_internal
+    from rrxray.voice.anonymizer import Anonymizer
+    from rrxray.voice.rr_voice import VoicePostProcessor
+    rendered = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "Funding Trajectory" in rendered
+    assert "series_b" in rendered
+    assert "25" in rendered
+
+def test_render_includes_positioning_drift_detail():
+    """When positioning_drift collector data is present, the detail block renders."""
+    from datetime import UTC, date, datetime
+
+    from rrxray.rendering.markdown import render_internal
+    from rrxray.schemas.data import (
+        CollectorOutputs,
+        InputParams,
+        RunMetadata,
+        SynthesizerOutputs,
+        XrayData,
+    )
+    from rrxray.schemas.positioning_drift import HomepageSnapshot, PositioningDriftData
+    from rrxray.voice.anonymizer import Anonymizer
+    from rrxray.voice.rr_voice import VoicePostProcessor
+
+    snap = HomepageSnapshot(
+        timestamp=date(2026, 5, 1),
+        archive_url="https://web.archive.org/web/20260501/https://example.com",
+        hero_headline="Fastest CRM for B2B teams",
+        primary_nav=["Product", "Pricing", "Blog"],
+    )
+    data = XrayData(
+        domain="example.com",
+        run_metadata=RunMetadata(
+            timestamp=datetime(2026, 5, 17, tzinfo=UTC),
+            tool_version="0.1.0",
+            modes_built=["internal"],
+            model_used="claude-sonnet-4-6",
+        ),
+        inputs=InputParams(domain="example.com", mode="internal", model="claude-sonnet-4-6"),
+        collectors=CollectorOutputs(
+            positioning_drift=PositioningDriftData(
+                snapshots=[snap],
+                oldest_snapshot=snap,
+                changed_fields=[],
+                diff_summary=None,
+            )
+        ),
+        synthesizers=SynthesizerOutputs(),
+    )
+    report = render_internal(data, Anonymizer(), VoicePostProcessor())
+    assert "Positioning Drift" in report
+    assert "Fastest CRM for B2B teams" in report

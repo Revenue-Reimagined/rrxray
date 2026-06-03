@@ -1,4 +1,5 @@
 """rrxray CLI: typer app with run, collect, synthesize, render subcommands."""
+
 from __future__ import annotations
 
 import asyncio
@@ -56,14 +57,8 @@ def _print_dry_run_plan(config: Config) -> None:
         f"({len(collector_names)} collectors x ~{scrape_per_collector} + {wayback_calls} Wayback)"
     )
     if firecrawl_searches:
-        typer.echo(
-            f"  Firecrawl search: ~{firecrawl_searches} "
-            f"(LinkedIn jobs + employee count for revenue_motion)"
-        )
-    typer.echo(
-        f"  Anthropic complete: {len(synth_names)} "
-        f"({config.model}, ~5K input + ~800 output each)"
-    )
+        typer.echo(f"  Firecrawl search: ~{firecrawl_searches} (LinkedIn jobs + employee count for revenue_motion)")
+    typer.echo(f"  Anthropic complete: {len(synth_names)} ({config.model}, ~5K input + ~800 output each)")
     typer.echo("")
     typer.echo("Estimated cost:")
     typer.echo(f"  Firecrawl: ~${fc_cost:.3f}")
@@ -90,6 +85,19 @@ def _execute_run(config: Config) -> None:
     typer.echo(f"Wrote {out_dir / 'data.json'}")
     typer.echo(f"Wrote {out_dir / f'report.{config.mode}.md'}")
 
+    if config.gtm_ingest_enabled:
+        from rrxray.services.gtm_ingest import build_ingestion_payload, post_ingestion_payload
+
+        payload = build_ingestion_payload(config, data, rendered)
+        try:
+            success = asyncio.run(post_ingestion_payload(config, payload))
+            if not success:
+                typer.echo("Warning: Downstream ingestion failed, but run is marked complete (not strict).", err=True)
+        except Exception as e:
+            typer.echo(f"Error during ingestion: {e}", err=True)
+            if config.gtm_ingest_strict:
+                raise typer.Exit(code=1) from e
+
 
 @app.command()
 def run(
@@ -105,22 +113,29 @@ def run(
         "haiku",
         "--extractor",
         help="LLM model used for press-release / LinkedIn extraction in leadership_stability. "
-             "Choices: haiku (default), gemini-flash. gemini-flash requires GEMINI_API_KEY.",
+        "Choices: haiku (default), gemini-flash. gemini-flash requires GEMINI_API_KEY.",
     ),
     pdl_cost_cap: float = typer.Option(
-        5.0, "--pdl-cost-cap",
+        5.0,
+        "--pdl-cost-cap",
         help="Hard ceiling on PDL spend per X-Ray, in USD.",
     ),
     no_pdl: bool = typer.Option(
-        False, "--no-pdl",
+        False,
+        "--no-pdl",
         help="Disable PDL enrichment entirely for this run.",
     ),
 ):
     """Full pipeline: collect -> synthesize -> render."""
     config = _build_config(
-        domain=domain, company_name=company_name, output_dir=output_dir,
+        domain=domain,
+        company_name=company_name,
+        output_dir=output_dir,
         skip_modules=[s.strip() for s in skip_modules.split(",") if s.strip()],
-        mode=mode, use_cache=use_cache, dry_run=dry_run, model=model,
+        mode=mode,
+        use_cache=use_cache,
+        dry_run=dry_run,
+        model=model,
         extractor_model=extractor,
         pdl_cost_cap_dollars=pdl_cost_cap,
         no_pdl=no_pdl,

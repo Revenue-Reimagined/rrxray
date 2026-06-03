@@ -1,6 +1,6 @@
 # rrxray Roadmap
 
-**Last updated:** 2026-05-07
+**Last updated:** 2026-05-16
 
 The Phase 1 foundation has shipped. This file tracks what's next, what's deferred, and the design decisions behind each.
 
@@ -39,6 +39,7 @@ The Phase 1 foundation has shipped. This file tracks what's next, what's deferre
 - `revenue_motion`: scrape careers page, parse JD titles + comp ranges + locations. Infer AE-to-SDR ratio, motion type (PLG / outbound / inbound / hybrid), enterprise vs mid-market vs SMB signals
 - `tech_stack`: scrape site source for analytics/martech tags (Segment, GTM, HubSpot, Marketo, Intercom, Drift, Pendo, etc.). Cross-reference public BuiltWith profile if available
 - `funding_trajectory`: Crunchbase public profile + press release search. Last-raise date, total raised, implied stage. Headcount-from-LinkedIn estimated via Google cache snippets
+  - **2026-05-16:** Phase 2.4a shipped — funding_trajectory collector (Crunchbase public profile + press search; LLM extraction via Haiku 4.5 for unstructured press body text). Section B synthesizer extended with 7 StabilityAggregates fields + funding lens prompt block + 2 new hypothesis bullets ("Stable, funded-and-running", "Stretching runway"). Module Detail Appendix partial. 68 new tests; total 536 passing; ruff clean. Quality gate: 3-domain smoke (Swayable/YC-seed, Healthicity/professionalized, Linear/bootstrapped) + Opus code review (3 post-review fixes: press-press dedup, unrecognized LLM series drop, evidence serialization + epoch-date guard). No new paid data partners. Known V1 limitation: Crunchbase regex tuned to synthetic fixture; real pages may fall back to press-only path.
 - `customer_concentration`: scrape logo wall, case studies index, G2 listing. Cluster customers by vertical and segment
 - `content_demand`: blog index crawl, count posts by month for last 12 months, detect cadence drops. Web search for podcast appearances
   - **2026-05-15:** Phase 2.1d shipped — content_demand collector + Section A synthesizer updated to read four signals. Blog cadence + post-category mix (8 categories) + lead-magnet posture + podcast (Apple/Spotify/RSS) + newsletter (Substack/embedded-form). Section A is now complete: pricing_packaging + tech_stack + revenue_motion + content_demand. 75 new tests; total 468 passing; ruff clean. Quality gate: 3-domain smoke (Swayable, Healthicity, linear.app) + Opus code review (7 review findings fixed). Known V1 limitation: blog-page nav links parsed as blog posts on some sites; synthesizer handles gracefully.
@@ -46,6 +47,7 @@ The Phase 1 foundation has shipped. This file tracks what's next, what's deferre
   - **2026-05-10:** Phase 2.2 shipped — leadership_stability collector + observed_stability_trajectory Section B synthesizer. Adds GeminiClient + extraction module (Haiku default; --extractor=gemini-flash flag). Pipeline-side anonymizer registration. Section B synthesizer escalated to Opus 4.7 for instruction-following on data-anchored timeframes. ~89 new tests; total 340 passing; ruff clean. Quality gate: 9 bug fixes across 5 iterations. Known limitation: tenure data still depends on press dates (LinkedIn-post URLs login-walled); Phase 2.2-deep adds PeopleDataLabs (~$0.20/record) to close the "tenure unconfirmed" gap.
   - **2026-05-12:** Phase 2.2-deep shipped — PeopleDataLabs enrichment. Quality gate signed off against Swayable + Healthicity (RR target ICP); remote.com as documented regression check. Per-X-Ray cost ~$2-3 in normal operation; cap $5. Closes the "tenure unconfirmed" narrative gap from Phase 2.2.
 - `positioning_drift`: Wayback snapshots of homepage at 6-month intervals over 18 months. Diff hero headline, sub-headline, primary nav. If competitors provided, scrape their current homepages
+  - **2026-05-19:** Phase 2.5a shipped — positioning_drift collector (deterministic Wayback diffs; no LLM). HomepageSnapshot + PositioningDriftData schemas. Hero/sub-headline + primary nav extraction via regex. changed_fields + diff_summary. Module Detail Appendix partial + report_internal include. 36 new tests; total 573 passing; ruff clean. Quality gate: Opus whole-branch review (post-review fixes: ruff import sorts + MIN_HEADLINE_LEN enforcement). No new paid data partners. Known V1 limitation: JS-heavy Wayback pages may return all-None fields; collector handles gracefully.
 - `buyer_sentiment`: G2, Capterra, Trustpilot, Reddit, Glassdoor. Verbatim themes (positive and negative). Pay particular attention to ex-AE Glassdoor reviews. **Verbatim Quarantine rule applies: raw text lives only in `evidence/buyer_sentiment/raw/`, never rendered.**
 
 **Synthesizers to upgrade:**

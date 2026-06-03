@@ -48,6 +48,8 @@ class CollectorOutputs(BaseModel):
     revenue_motion: "RevenueMotionData | None" = None  # forward ref
     content_demand: "ContentDemandData | None" = None  # forward ref
     leadership_stability: "LeadershipStabilityData | None" = None  # forward ref
+    funding_trajectory: "FundingTrajectoryData | None" = None  # forward ref
+    positioning_drift: "PositioningDriftData | None" = None  # Phase 2.5a
 
 
 class ObservedGtmMotionNarrative(BaseModel):
@@ -90,7 +92,9 @@ class XrayData(BaseModel):
 
 # Resolve forward references
 from rrxray.schemas.content_demand import ContentDemandData  # noqa: E402
+from rrxray.schemas.funding_trajectory import FundingTrajectoryData  # noqa: E402
 from rrxray.schemas.leadership_stability import LeadershipStabilityData  # noqa: E402
+from rrxray.schemas.positioning_drift import PositioningDriftData  # noqa: E402
 from rrxray.schemas.pricing_packaging import PricingPackagingData  # noqa: E402
 from rrxray.schemas.revenue_motion import RevenueMotionData  # noqa: E402
 from rrxray.schemas.tech_stack import TechStackData  # noqa: E402
