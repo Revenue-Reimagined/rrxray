@@ -13,6 +13,23 @@ from rrxray.schemas.data import XrayData
 log = logging.getLogger("rrxray.gtm_ingest")
 
 
+def _source_payload(index: int, source) -> dict:
+    return {
+        "index": index,
+        "url": source.url,
+        "extracted_at": source.timestamp.isoformat() if hasattr(source.timestamp, "isoformat") else str(source.timestamp),
+        "content_summary": None,
+    }
+
+
+def _source_index(source, url_to_index: dict[str, int], sources_payload: list[dict]) -> int:
+    """Return a stable source index, preserving finding-level links if they were omitted from data.sources."""
+    if source.url not in url_to_index:
+        url_to_index[source.url] = len(sources_payload)
+        sources_payload.append(_source_payload(url_to_index[source.url], source))
+    return url_to_index[source.url]
+
+
 def build_ingestion_payload(config: Config, data: XrayData, markdown_content: str) -> dict:
     """Builds the ingestion payload from XrayData and rendered Markdown content.
 
@@ -23,16 +40,7 @@ def build_ingestion_payload(config: Config, data: XrayData, markdown_content: st
     sources_payload = []
     for idx, source in enumerate(data.sources):
         url_to_index[source.url] = idx
-        sources_payload.append(
-            {
-                "index": idx,
-                "url": source.url,
-                "extracted_at": source.timestamp.isoformat()
-                if hasattr(source.timestamp, "isoformat")
-                else str(source.timestamp),
-                "content_summary": None,
-            }
-        )
+        sources_payload.append(_source_payload(idx, source))
 
     # 2. Map synthesizers (observed_gtm_motion and observed_stability_trajectory)
     observed_gtm_motion_payload = None
@@ -41,7 +49,7 @@ def build_ingestion_payload(config: Config, data: XrayData, markdown_content: st
         observed_gtm_motion_payload = {
             "narrative_paragraphs": motion.narrative_paragraphs,
             "gap_bullets": motion.gap_bullets,
-            "findings": [{"text": f.text, "source_index": url_to_index.get(f.source.url, 0)} for f in motion.findings],
+            "findings": [{"text": f.text, "source_index": _source_index(f.source, url_to_index, sources_payload)} for f in motion.findings],
             "gaps": motion.gaps,
             "discovery_questions": motion.discovery_questions,
         }
@@ -51,7 +59,7 @@ def build_ingestion_payload(config: Config, data: XrayData, markdown_content: st
         stab = data.synthesizers.observed_stability_trajectory
         observed_stability_trajectory_payload = {
             "narrative_paragraphs": stab.narrative_paragraphs,
-            "findings": [{"text": f.text, "source_index": url_to_index.get(f.source.url, 0)} for f in stab.findings],
+            "findings": [{"text": f.text, "source_index": _source_index(f.source, url_to_index, sources_payload)} for f in stab.findings],
             "gaps": stab.gaps,
             "discovery_questions": stab.discovery_questions,
         }
@@ -161,6 +169,8 @@ async def post_ingestion_payload(config: Config, payload: dict) -> bool:
     }
     if config.gtm_ingest_token:
         headers["Authorization"] = f"Bearer {config.gtm_ingest_token.get_secret_value()}"
+    if payload.get("run_id"):
+        headers["Idempotency-Key"] = str(payload["run_id"])
 
     # Merge custom headers from configuration
     if config.gtm_ingest_headers:
@@ -188,12 +198,22 @@ async def post_ingestion_payload(config: Config, payload: dict) -> bool:
                         pass
                     return True
                 else:
-                    log.warning(
-                        "Attempt %d: Failed to post X-Ray report. Status: %d, Response: %r",
-                        attempt,
-                        response.status_code,
-                        response.text[:200],
+                    msg = (
+                        "Failed to post X-Ray report to gtmfoundations. "
+                        f"Status: {response.status_code}, Response: {response.text[:500]!r}"
                     )
+                    log.warning(
+                        "Attempt %d: %s",
+                        attempt,
+                        msg,
+                    )
+                    if attempt == attempts:
+                        log.error("%s after %d attempts.", msg, attempts)
+                        if config.gtm_ingest_strict:
+                            raise RuntimeError(msg)
+                        return False
+            except RuntimeError:
+                raise
             except Exception as e:
                 log.warning("Attempt %d: Error posting X-Ray report: %s", attempt, str(e))
                 if attempt == attempts:
